@@ -57,6 +57,10 @@ dependencies:
   permission_handler: ^12.0.1
   intl: ^0.20.2
 
+  # Native payment detection (bank SMS + payment-app notifications)
+  vyaya_capture:
+    path: packages/vyaya_capture
+
   # (flutter_dotenv removed — no longer needed)
 
 dev_dependencies:

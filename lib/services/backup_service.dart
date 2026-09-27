@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/expense_provider.dart';
 import '../providers/user_provider.dart';
+import '../providers/capture_provider.dart';
 import 'cache_service.dart';
 import 'supabase_service.dart';
 
@@ -124,6 +125,8 @@ class BackupService {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final captureProvider =
+        Provider.of<CaptureProvider>(context, listen: false);
     final expenseProvider =
         Provider.of<ExpenseProvider>(context, listen: false);
 
@@ -179,6 +182,7 @@ class BackupService {
         return false;
       }
       await userProvider.initializeExpenseProvider(expenseProvider);
+      await captureProvider.reload(); // detected payments from the backup
 
       // Keep the shadow auto-backup in sync with what was just restored.
       await autoSave();

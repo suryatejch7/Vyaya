@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../models/expense_models.dart';
 import '../widgets/undo_snackbar.dart';
 import '../providers/expense_provider.dart';
+import '../providers/capture_provider.dart';
+import 'detected_payments_screen.dart';
 import '../widgets/expense_card.dart';
 import '../widgets/income_card.dart';
 import '../widgets/category_summary.dart';
@@ -220,6 +222,65 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                 ),
+              ),
+            ),
+            // "N payments detected" banner (auto-detection review queue)
+            SliverToBoxAdapter(
+              child: Consumer<CaptureProvider>(
+                builder: (context, cap, child) {
+                  final n = cap.pendingCount;
+                  if (n == 0) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Material(
+                      color: Colors.amber.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(14),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                const DetectedPaymentsScreen(),
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.bolt_rounded,
+                                  color: Colors.amber),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      n == 1
+                                          ? '1 payment detected'
+                                          : '$n payments detected',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const Text(
+                                      'Tap to review',
+                                      style: TextStyle(
+                                          color: Colors.grey, fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(Icons.chevron_right,
+                                  color: Colors.grey),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
             const SliverToBoxAdapter(

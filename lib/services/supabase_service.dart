@@ -395,6 +395,7 @@ class ExpenseSupabaseService {
     await _p.remove('ls_recurring_$userId');
     await _p.remove('ls_debts_$userId');
     await _p.remove('ls_savings_through_$userId');
+    await _p.remove('ls_savings_from_$userId');
   }
 
   // ==================== PRIVATE HELPERS ====================

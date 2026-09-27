@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/expense_provider.dart';
 import 'providers/user_provider.dart';
+import 'providers/capture_provider.dart';
 import 'screens/main_screen.dart';
 import 'services/supabase_service.dart';
 import 'services/backup_service.dart';
@@ -37,6 +38,7 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => UserProvider()),
         ChangeNotifierProvider(create: (_) => ExpenseProvider()),
+        ChangeNotifierProvider(create: (_) => CaptureProvider()),
       ],
       child: MaterialApp(
         title: 'Vyaya',
@@ -69,6 +71,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
   Future<void> _bootstrap() async {
     final userProvider = context.read<UserProvider>();
     final expenseProvider = context.read<ExpenseProvider>();
+    final captureProvider = context.read<CaptureProvider>();
 
     // Try to load existing user
     await userProvider.loadUserFromStorage();
@@ -88,6 +91,8 @@ class _AppBootstrapState extends State<AppBootstrap> {
     // Initialize expense provider with the user
     if (userProvider.isLoggedIn) {
       await userProvider.initializeExpenseProvider(expenseProvider);
+      // Payment auto-detection: drain anything captured while closed.
+      await captureProvider.attach(expenseProvider);
     }
 
     if (mounted) {

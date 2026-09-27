@@ -291,7 +291,11 @@ class _GlassNavBarState extends State<GlassNavBar>
                           ),
                         ],
                       ),
+                      // expand: the Row must fill the whole 280x70 bar (as it
+                      // did before the handle was added) so items stay
+                      // vertically centred; the handle only overlays.
                       child: Stack(
+                        fit: StackFit.expand,
                         children: [
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -329,7 +333,7 @@ class _GlassNavBarState extends State<GlassNavBar>
                           // Grab handle: hints "swipe up for more"
                           if (!widget.isSelectionMode)
                             Positioned(
-                              top: 5,
+                              top: 4,
                               left: 0,
                               right: 0,
                               child: IgnorePointer(

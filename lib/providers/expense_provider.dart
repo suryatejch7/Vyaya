@@ -344,6 +344,7 @@ class ExpenseProvider extends ChangeNotifier {
   Future<void> addExpense(Expense expense) async {
     try {
       await _expenseManager.addExpense(expense, _userId);
+      await _resyncSavings();
 
       await _notificationManager.triggerExpenseNotifications(
         expense: expense,
@@ -365,6 +366,7 @@ class ExpenseProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
       await _expenseManager.updateExpense(expense, _userId);
+      await _resyncSavings();
       _refreshCalculations();
     } catch (e) {
       throw Exception('Failed to update expense: $e');
@@ -379,6 +381,7 @@ class ExpenseProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
       await _expenseManager.deleteExpense(expenseId, _userId);
+      await _resyncSavings();
       _refreshCalculations();
     } catch (e) {
       throw Exception('Failed to delete expense: $e');
@@ -418,6 +421,7 @@ class ExpenseProvider extends ChangeNotifier {
   Future<void> addIncome(Income income) async {
     try {
       await _incomeManager.addIncome(income, _userId);
+      await _resyncSavings();
       notifyListeners();
     } catch (e) {
       throw Exception('Failed to add income: $e');
@@ -429,6 +433,7 @@ class ExpenseProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
       await _incomeManager.updateIncome(income, _userId);
+      await _resyncSavings();
       _refreshCalculations();
     } catch (e) {
       throw Exception('Failed to update income: $e');
@@ -443,6 +448,7 @@ class ExpenseProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
       await _incomeManager.deleteIncome(incomeId, _userId);
+      await _resyncSavings();
       _refreshCalculations();
     } catch (e) {
       throw Exception('Failed to delete income: $e');
@@ -701,6 +707,7 @@ class ExpenseProvider extends ChangeNotifier {
     for (final e in expenses) {
       await _expenseManager.addExpense(e, _userId);
     }
+    await _resyncSavings();
     notifyListeners();
   }
 
@@ -708,6 +715,7 @@ class ExpenseProvider extends ChangeNotifier {
     for (final i in incomes) {
       await _incomeManager.addIncome(i, _userId);
     }
+    await _resyncSavings();
     notifyListeners();
   }
 
@@ -863,39 +871,80 @@ class ExpenseProvider extends ChangeNotifier {
 
   static const String savedCategoryName = 'Saved';
 
-  /// For every finished month not yet handled: if income - spent > 0, add
-  /// that leftover as a "Saved" expense on the month's last day, so the
-  /// month closes at zero and savings show up per category.
-  /// First run only sets the marker (no back-filling of old months).
+  /// Tag stored in Expense.transactionId to mark the automatic Saved entry
+  /// of a month, e.g. "auto-saved-2026-09".
+  static const String _autoSavedPrefix = 'auto-saved-';
+
+  static bool _isAutoSaved(Expense e) =>
+      e.transactionId?.startsWith(_autoSavedPrefix) ?? false;
+
+  bool _savingsRunning = false;
+
+  /// Keeps every closed month's "Saved" entry equal to that month's
+  /// leftover (income - spent, excluding the Saved entry itself). Creates,
+  /// updates or removes it as needed, so late edits to a past month are
+  /// reflected automatically. Months before this feature started are left
+  /// alone (no back-filling).
   Future<void> _processMonthEndSavings() async {
-    final now = DateTime.now();
-    final thisMonth = DateTime(now.year, now.month);
-    final marker =
-        ExpenseSupabaseService.getMeta('savings_through', userId: _userId);
+    if (_userId == 0 || _savingsRunning) return;
+    _savingsRunning = true;
+    try {
+      final now = DateTime.now();
+      final thisMonth = DateTime(now.year, now.month);
 
-    if (marker == null) {
-      await ExpenseSupabaseService.setMeta(
-          'savings_through', _monthKey(DateTime(now.year, now.month - 1)),
-          userId: _userId);
-      return;
+      var fromKey =
+          ExpenseSupabaseService.getMeta('savings_from', userId: _userId);
+      if (fromKey == null) {
+        // Migrate from the earlier one-shot marker if present.
+        final legacy =
+            ExpenseSupabaseService.getMeta('savings_through', userId: _userId);
+        final legacyMonth = legacy == null ? null : _parseMonthKey(legacy);
+        final from = legacyMonth == null
+            ? thisMonth
+            : DateTime(legacyMonth.year, legacyMonth.month + 1);
+        fromKey = _monthKey(from);
+        await ExpenseSupabaseService.setMeta('savings_from', fromKey,
+            userId: _userId);
+      }
+
+      final from = _parseMonthKey(fromKey);
+      if (from == null) return;
+      for (var m = from;
+          m.isBefore(thisMonth);
+          m = DateTime(m.year, m.month + 1)) {
+        await _reconcileSavingsFor(m);
+      }
+    } finally {
+      _savingsRunning = false;
     }
+  }
 
-    final last = _parseMonthKey(marker);
-    if (last == null) return;
-    var m = DateTime(last.year, last.month + 1);
+  Future<void> _reconcileSavingsFor(DateTime m) async {
+    final now = DateTime.now();
+    final tag = '$_autoSavedPrefix${_monthKey(m)}';
+    bool inMonth(DateTime d) => d.year == m.year && d.month == m.month;
 
-    while (m.isBefore(thisMonth)) {
-      bool inMonth(DateTime d) => d.year == m.year && d.month == m.month;
-      final income = _incomeManager.incomes
-          .where((i) => inMonth(i.date))
-          .fold(0.0, (sum, i) => sum + i.amount);
-      final spent = _expenseManager.expenses
-          .where((e) => inMonth(e.date))
-          .fold(0.0, (sum, e) => sum + e.amount);
-      final left = double.parse((income - spent).toStringAsFixed(2));
+    final income = _incomeManager.incomes
+        .where((i) => inMonth(i.date))
+        .fold(0.0, (sum, i) => sum + i.amount);
+    final spent = _expenseManager.expenses
+        .where((e) => inMonth(e.date) && !_isAutoSaved(e))
+        .fold(0.0, (sum, e) => sum + e.amount);
+    final left = double.parse((income - spent).toStringAsFixed(2));
 
-      if (left > 0) {
-        await _ensureSavedCategory();
+    final autoEntries =
+        _expenseManager.expenses.where((e) => e.transactionId == tag).toList();
+    // Safety: never keep more than one Saved entry per month.
+    for (final extra in autoEntries.skip(1)) {
+      if (extra.id != null) {
+        await _expenseManager.deleteExpense(extra.id!, _userId);
+      }
+    }
+    final existing = autoEntries.isEmpty ? null : autoEntries.first;
+
+    if (left > 0) {
+      await _ensureSavedCategory();
+      if (existing == null) {
         await _expenseManager.addExpense(
           Expense(
             amount: left,
@@ -903,18 +952,37 @@ class ExpenseProvider extends ChangeNotifier {
             category: savedCategoryName,
             date: DateTime(m.year, m.month + 1, 0), // last day of month
             paymentApp: 'Auto',
-            notes: 'Leftover (income − spent) moved to savings automatically',
+            transactionId: tag,
+            notes: 'Leftover (income − spent), kept up to date automatically',
             accountId: defaultAccount?.id,
             createdAt: now,
             updatedAt: now,
           ),
           _userId,
         );
+      } else if ((existing.amount - left).abs() >= 0.005 ||
+          existing.category != savedCategoryName) {
+        await _expenseManager.updateExpense(
+          existing.copyWith(
+            amount: left,
+            category: savedCategoryName,
+            updatedAt: now,
+          ),
+          _userId,
+        );
       }
+    } else if (existing?.id != null) {
+      // Month no longer has a leftover (e.g. a late expense was added).
+      await _expenseManager.deleteExpense(existing!.id!, _userId);
+    }
+  }
 
-      await ExpenseSupabaseService.setMeta('savings_through', _monthKey(m),
-          userId: _userId);
-      m = DateTime(m.year, m.month + 1);
+  /// Re-checks closed months after any add/edit/delete.
+  Future<void> _resyncSavings() async {
+    try {
+      await _processMonthEndSavings();
+    } catch (e) {
+      debugPrint('Savings resync failed: $e');
     }
   }
 

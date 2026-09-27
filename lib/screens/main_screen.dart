@@ -10,6 +10,7 @@ import '../services/intent_service.dart';
 import '../widgets/liquid_glass_nav_bar.dart';
 import '../widgets/expandable_fab.dart';
 import '../providers/expense_provider.dart';
+import '../providers/capture_provider.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -65,6 +66,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
       context.read<ExpenseProvider>().runAutomations();
+      // Pick up payments captured in the background + permission changes
+      // made in system settings.
+      context.read<CaptureProvider>()
+        ..refreshStatus()
+        ..sync();
     }
   }
 

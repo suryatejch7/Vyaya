@@ -2,16 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/expense_provider.dart';
 import '../providers/user_provider.dart';
+import '../providers/capture_provider.dart';
+import 'detected_payments_screen.dart';
 import '../models/expense_models.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 import '../services/export_service.dart';
 import '../services/backup_service.dart';
 import 'crop_calibration_screen.dart';
+import 'recurring_screen.dart';
 import 'package:file_picker/file_picker.dart';
 
+/// Settings is a hub page; heavier sections open as their own pages that
+/// reuse the same state class (so dialogs/helpers are shared).
+enum SettingsPage { home, categories, accounts, autoDetect }
+
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  final SettingsPage page;
+  const SettingsScreen({super.key, this.page = SettingsPage.home});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -83,36 +91,335 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: !_isCategorySelectionMode,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _isCategorySelectionMode) _clearCategorySelection();
-      },
-      child: Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: const Text(
-          'Settings',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+    switch (widget.page) {
+      case SettingsPage.categories:
+        return _buildCategoriesPage();
+      case SettingsPage.accounts:
+        return _subPage(
+          'Bank Accounts',
+          Consumer<ExpenseProvider>(
+            builder: (context, ep, child) => _buildAccountsSection(ep),
+          ),
+        );
+      case SettingsPage.autoDetect:
+        return _subPage('Auto-detect Payments', _buildAutoDetectSection());
+      case SettingsPage.home:
+        return _buildHome();
+    }
+  }
+
+  // ==================== LAYOUT HELPERS ====================
+
+  PreferredSizeWidget _appBar(String title) => AppBar(
+        title: Text(
+          title,
+          style:
+              const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.black,
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            Navigator.of(context).maybePop();
-          },
+          onPressed: () => Navigator.of(context).maybePop(),
         ),
+      );
+
+  Widget _subPage(String title, Widget child) => Scaffold(
+        backgroundColor: Colors.black,
+        appBar: _appBar(title),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.only(top: 8, bottom: 32),
+          child: child,
+        ),
+      );
+
+  void _open(SettingsPage page) => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => SettingsScreen(page: page)),
+      );
+
+  /// Card without a title (profile header).
+  Widget _plainCard({required Widget child}) => Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0D0D0D),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+        ),
+        child: child,
+      );
+
+  Widget _groupLabel(String text) => Padding(
+        padding: const EdgeInsets.fromLTRB(28, 24, 28, 8),
+        child: Text(
+          text,
+          style: TextStyle(
+            color: Colors.grey[500],
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1.1,
+          ),
+        ),
+      );
+
+  /// Rounded group of rows with thin dividers between them.
+  Widget _group(List<Widget> rows) => Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0D0D0D),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            for (var i = 0; i < rows.length; i++) ...[
+              if (i > 0)
+                Divider(
+                  height: 1,
+                  indent: 64,
+                  color: Colors.grey.withValues(alpha: 0.15),
+                ),
+              rows[i],
+            ],
+          ],
+        ),
+      );
+
+  Widget _tileIcon(IconData icon, Color color) => Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: color, size: 20),
+      );
+
+  Widget _row({
+    required IconData icon,
+    required Color color,
+    required String title,
+    String? subtitle,
+    VoidCallback? onTap,
+    Widget? trailing,
+    bool chevron = true,
+    Color titleColor = Colors.white,
+  }) {
+    return ListTile(
+      onTap: onTap,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+      leading: _tileIcon(icon, color),
+      title: Text(title,
+          style: TextStyle(color: titleColor, fontWeight: FontWeight.w500)),
+      subtitle: subtitle == null
+          ? null
+          : Text(subtitle,
+              style: const TextStyle(color: Colors.grey, fontSize: 12.5)),
+      trailing: trailing ??
+          (chevron ? const Icon(Icons.chevron_right, color: Colors.grey) : null),
+    );
+  }
+
+  Widget _badge(int n) => Container(
+        margin: const EdgeInsets.only(right: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: Colors.amber,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text('$n',
+            style: const TextStyle(
+                color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12)),
+      );
+
+  // ==================== HOME (hub) ====================
+
+  Widget _buildHome() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: _appBar('Settings'),
+      body: Consumer3<UserProvider, ExpenseProvider, CaptureProvider>(
+        builder: (context, userProvider, expenseProvider, cap, child) {
+          final accounts = expenseProvider.accounts;
+          final defaultAccount = expenseProvider.defaultAccount;
+          final activeRecurring =
+              expenseProvider.recurringEntries.where((r) => r.active).length;
+          final catCount = expenseProvider.categories.length;
+
+          return ListView(
+            padding: const EdgeInsets.only(top: 8, bottom: 40),
+            children: [
+              _buildProfileCard(userProvider, expenseProvider),
+
+              _groupLabel('MONEY'),
+              _group([
+                _row(
+                  icon: Icons.category_rounded,
+                  color: Colors.orange,
+                  title: 'Categories',
+                  subtitle:
+                      '$catCount ${catCount == 1 ? 'category' : 'categories'} · limits and deleting',
+                  onTap: () => _open(SettingsPage.categories),
+                ),
+                _row(
+                  icon: Icons.account_balance_rounded,
+                  color: Colors.blue,
+                  title: 'Bank Accounts',
+                  subtitle: accounts.isEmpty
+                      ? 'None added'
+                      : '${accounts.length} ${accounts.length == 1 ? 'account' : 'accounts'}${defaultAccount != null ? ' · ${defaultAccount.name} default' : ''}',
+                  onTap: () => _open(SettingsPage.accounts),
+                ),
+                _row(
+                  icon: Icons.repeat_rounded,
+                  color: Colors.teal,
+                  title: 'Recurring',
+                  subtitle: activeRecurring == 0
+                      ? 'Monthly income and bills'
+                      : '$activeRecurring active',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const RecurringScreen()),
+                  ),
+                ),
+              ]),
+
+              _groupLabel('AUTOMATION'),
+              _group([
+                _row(
+                  icon: Icons.bolt_rounded,
+                  color: Colors.amber,
+                  title: 'Auto-detect Payments',
+                  subtitle: !cap.isEnabled
+                      ? 'Off · log payments from SMS and payment apps'
+                      : cap.autoMode
+                          ? 'On · adds automatically'
+                          : 'On · asks before adding',
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (cap.pendingCount > 0) _badge(cap.pendingCount),
+                      const Icon(Icons.chevron_right, color: Colors.grey),
+                    ],
+                  ),
+                  onTap: () => _open(SettingsPage.autoDetect),
+                ),
+                _row(
+                  icon: Icons.crop_free_rounded,
+                  color: Colors.deepOrange,
+                  title: 'PhonePe Screenshot Scanning',
+                  subtitle: 'Crop calibration',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const CropCalibrationScreen()),
+                  ),
+                ),
+              ]),
+
+              _groupLabel('NOTIFICATIONS'),
+              _group([
+                FutureBuilder<bool>(
+                  future: NotificationService.areNotificationsEnabled(),
+                  builder: (context, snapshot) {
+                    final on = snapshot.data ?? true;
+                    return _row(
+                      icon: Icons.notifications_rounded,
+                      color: Colors.purpleAccent,
+                      title: 'Spending alerts',
+                      subtitle: 'When spending passes your income or a category limit',
+                      onTap: () async {
+                        await NotificationService.setNotificationsEnabled(!on);
+                        setState(() {});
+                      },
+                      trailing: Switch(
+                        value: on,
+                        onChanged: (value) async {
+                          await NotificationService.setNotificationsEnabled(
+                              value);
+                          setState(() {});
+                        },
+                      ),
+                    );
+                  },
+                ),
+                _row(
+                  icon: Icons.notification_add_outlined,
+                  color: Colors.grey,
+                  title: 'Send test notification',
+                  chevron: false,
+                  onTap: () async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    await NotificationService.checkIncomeExceeded(26000, 25000);
+                    messenger.showSnackBar(const SnackBar(
+                      content: Text('Test notification sent'),
+                      duration: Duration(seconds: 1),
+                    ));
+                  },
+                ),
+              ]),
+
+              _groupLabel('DATA'),
+              _group([
+                _row(
+                  icon: Icons.table_view_rounded,
+                  color: Colors.green,
+                  title: 'Export to spreadsheet',
+                  subtitle: 'All expenses and income as a CSV file',
+                  chevron: false,
+                  onTap: () => ExportService.exportAndShare(context),
+                ),
+                _row(
+                  icon: Icons.backup_rounded,
+                  color: Colors.lightBlue,
+                  title: 'Back up',
+                  subtitle: 'Save everything to a file you can restore later',
+                  chevron: false,
+                  onTap: () => BackupService.createAndShareBackup(context),
+                ),
+                _row(
+                  icon: Icons.restore_rounded,
+                  color: Colors.indigoAccent,
+                  title: 'Restore from backup',
+                  subtitle: 'Replaces current data with a backup file',
+                  chevron: false,
+                  onTap: _pickAndRestoreBackup,
+                ),
+              ]),
+              const SizedBox(height: 16),
+              _group([
+                _row(
+                  icon: Icons.delete_forever_rounded,
+                  color: Colors.redAccent,
+                  title: 'Reset all data',
+                  titleColor: Colors.redAccent,
+                  chevron: false,
+                  onTap: () =>
+                      _showResetDataDialog(userProvider, expenseProvider),
+                ),
+              ]),
+
+              const SizedBox(height: 24),
+              Center(
+                child: Text(
+                  'Vyaya v2.1.2',
+                  style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                ),
+              ),
+            ],
+          );
+        },
       ),
-      body: Consumer2<UserProvider, ExpenseProvider>(
-        builder: (context, userProvider, expenseProvider, child) {
-          return SingleChildScrollView(
-            child: Column(
-              children: [
-                // User Profile Section
-                _buildSectionCard(
-                  title: 'Profile',
+    );
+  }
+
+  Widget _buildProfileCard(
+      UserProvider userProvider, ExpenseProvider expenseProvider) {
+    return _plainCard(
                   child: Column(
                     children: [
                       Row(
@@ -213,12 +520,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                   ),
-                ),
+                );
+  }
 
-                const SizedBox(height: 20),
+  // ==================== CATEGORIES PAGE ====================
 
-                // Categories Section
-                Container(
+  Widget _buildCategoriesPage() {
+    // Back button leaves category selection mode before leaving the page.
+    return PopScope(
+      canPop: !_isCategorySelectionMode,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _isCategorySelectionMode) _clearCategorySelection();
+      },
+      child: _subPage(
+        'Categories',
+        Consumer<ExpenseProvider>(
+          builder: (context, expenseProvider, child) =>
+              _buildCategoriesSection(expenseProvider),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoriesSection(ExpenseProvider expenseProvider) {
+    return Container(
                   margin: const EdgeInsets.symmetric(horizontal: 16),
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -452,221 +777,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ],
                     ],
                   ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // Bank Accounts Section
-                _buildAccountsSection(expenseProvider),
-
-                const SizedBox(height: 20),
-
-                // PhonePe scanning (moved here from the quick-actions sheet)
-                _buildSectionCard(
-                  title: 'PhonePe Scanning',
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(Icons.crop_free, color: Colors.orange),
-                    ),
-                    title: const Text(
-                      'Crop Calibration',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                    subtitle: const Text(
-                      'Set which part of a screenshot holds the payee and amount',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                    trailing: const Icon(Icons.chevron_right, color: Colors.grey),
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const CropCalibrationScreen(),
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // Notification Settings Section
-                _buildNotificationSettingsSection(),
-
-                const SizedBox(height: 20),
-
-                // Data Management Section
-                _buildDataManagementSection(userProvider, expenseProvider),
-
-                const SizedBox(height: 32),
-              ],
-            ),
-          );
-        },
-      ),
-      ),
-    );
-  }
-
-  Widget _buildSectionCard({required String title, required Widget child}) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0D0D0D),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.grey.withValues(alpha: 0.15),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          child,
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNotificationSettingsSection() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.grey.withValues(alpha: 0.2),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.notifications,
-                color: Theme.of(context).colorScheme.primary,
-                size: 24,
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                'Notifications',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          
-          // Notification Toggle
-          FutureBuilder<bool>(
-            future: NotificationService.areNotificationsEnabled(),
-            builder: (context, snapshot) {
-              final isEnabled = snapshot.data ?? true;
-              return SwitchListTile(
-                title: const Text(
-                  'Enable Notifications',
-                  style: TextStyle(color: Colors.white),
-                ),
-                subtitle: const Text(
-                  'Get alerts when spending passes your income or a category limit',
-                  style: TextStyle(color: Colors.grey),
-                ),
-                value: isEnabled,
-                onChanged: (value) async {
-                  await NotificationService.setNotificationsEnabled(value);
-                  setState(() {});
-                },
-                activeThumbColor: Theme.of(context).colorScheme.primary,
-                contentPadding: EdgeInsets.zero,
-              );
-            },
-          ),
-          
-          const SizedBox(height: 16),
-          
-          // Test Notification Button
-          ElevatedButton.icon(
-            onPressed: () async {
-              await NotificationService.checkIncomeExceeded(26000, 25000);
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Test notification sent! Check your notification shade.'),
-                    duration: Duration(seconds: 1),
-                  ),
                 );
-              }
-            },
-            icon: const Icon(Icons.notifications),
-            label: const Text('Test Notification'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.primary,
-              foregroundColor: Colors.white,
-            ),
-          ),
-          
-          const SizedBox(height: 16),
-          
-          // Notification Types Info
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.grey.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Notification Types:',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  '• Monthly budget exceeded alert\n'
-                  '• Category budget exceeded alert',
-                  style: TextStyle(
-                    color: Colors.grey,
-                    fontSize: 14,
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   void _showAddCategoryDialog() {
@@ -1091,6 +1202,190 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // ==================== AUTO-DETECT PAYMENTS ====================
+
+  Widget _buildAutoDetectSection() {
+    return Consumer<CaptureProvider>(
+      builder: (context, cap, child) {
+        Widget sourceRow({
+          required IconData icon,
+          required Color color,
+          required String title,
+          required String subtitle,
+          required bool on,
+          required VoidCallback onTap,
+        }) {
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            onTap: onTap,
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: color),
+            ),
+            title: Text(title, style: const TextStyle(color: Colors.white)),
+            subtitle: Text(subtitle, style: const TextStyle(color: Colors.grey)),
+            trailing: on
+                ? Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text('On',
+                        style: TextStyle(
+                            color: Colors.green, fontWeight: FontWeight.bold)),
+                  )
+                : const Text('Turn on',
+                    style: TextStyle(
+                        color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+          );
+        }
+
+        return _plainCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Log payments automatically from payment app notifications and bank SMS. Everything is read and stored only on your phone.',
+                style: TextStyle(color: Colors.grey, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              sourceRow(
+                icon: Icons.notifications_active_outlined,
+                color: Colors.purple,
+                title: 'Payment app notifications',
+                subtitle: 'PhonePe, Google Pay, Paytm, BHIM, CRED…',
+                on: cap.notificationAccess,
+                onTap: cap.openNotificationAccess,
+              ),
+              sourceRow(
+                icon: Icons.sms_outlined,
+                color: Colors.blue,
+                title: 'Bank SMS',
+                subtitle: 'Debit and credit alerts from your bank',
+                on: cap.smsPermission,
+                onTap: () async {
+                  if (cap.smsPermission) {
+                    await cap.openAppDetails(); // turn off from App info
+                    return;
+                  }
+                  final messenger = ScaffoldMessenger.of(context);
+                  final ok = await cap.requestSmsPermission();
+                  if (!ok) {
+                    messenger.showSnackBar(const SnackBar(
+                      content: Text(
+                          'SMS permission not granted. If Android blocks it, open App info → ⋮ → Allow restricted settings.'),
+                    ));
+                  }
+                },
+              ),
+              if (cap.smsPermission)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.history, color: Colors.grey),
+                  title: const Text('Import last 30 days of bank SMS',
+                      style: TextStyle(color: Colors.white)),
+                  subtitle: const Text(
+                      'Imported payments always wait for your review',
+                      style: TextStyle(color: Colors.grey)),
+                  onTap: () async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    messenger.showSnackBar(
+                        const SnackBar(content: Text('Importing…')));
+                    final n = await cap.importRecentSms();
+                    messenger.hideCurrentSnackBar();
+                    messenger.showSnackBar(SnackBar(
+                      content: Text(n == 0
+                          ? 'No new payments found'
+                          : 'Found $n payment${n == 1 ? '' : 's'}, see Detected payments'),
+                    ));
+                  },
+                ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Add automatically',
+                    style: TextStyle(color: Colors.white)),
+                subtitle: Text(
+                  cap.autoMode
+                      ? 'Clear matches are logged right away; anything unclear waits for review'
+                      : 'Every detected payment waits for you to review',
+                  style: const TextStyle(color: Colors.grey),
+                ),
+                value: cap.autoMode,
+                onChanged: cap.setAutoMode,
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.fact_check_outlined,
+                    color: Colors.amber),
+                title: const Text('Detected payments',
+                    style: TextStyle(color: Colors.white)),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (cap.pendingCount > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.amber,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text('${cap.pendingCount}',
+                            style: const TextStyle(
+                                color: Colors.black,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                    const Icon(Icons.chevron_right, color: Colors.grey),
+                  ],
+                ),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const DetectedPaymentsScreen()),
+                ),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading:
+                    const Icon(Icons.battery_saver_outlined, color: Colors.grey),
+                title: const Text('Keep detection running',
+                    style: TextStyle(color: Colors.white)),
+                subtitle: const Text(
+                    'Exclude Vyaya from battery optimisation. Recommended on OnePlus, Xiaomi and similar phones.',
+                    style: TextStyle(color: Colors.grey)),
+                onTap: cap.requestBatteryExemption,
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const Icon(Icons.help_outline, size: 16, color: Colors.grey),
+                  const SizedBox(width: 6),
+                  const Expanded(
+                    child: Text(
+                      'Switch greyed out in Notification access? Open App info → ⋮ → "Allow restricted settings", then try again.',
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: cap.openAppDetails,
+                    child: const Text('App info'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   // ==================== ACCOUNTS SECTION ====================
 
   Widget _buildAccountsSection(ExpenseProvider expenseProvider) {
@@ -1459,159 +1754,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // ==================== DATA MANAGEMENT SECTION ====================
 
-  Widget _buildDataManagementSection(
-    UserProvider userProvider,
-    ExpenseProvider expenseProvider,
-  ) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0D0D0D),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.grey.withValues(alpha: 0.15),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Data Management',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Export Data
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.download_rounded, size: 20),
-              label: const Text('Export Data (CSV)'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.teal,
-                foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              onPressed: () {
-                ExportService.exportAndShare(context);
-              },
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Exports all expenses and income as a CSV file you can share or open in a spreadsheet app.',
-            style: TextStyle(
-              color: Colors.grey.withValues(alpha: 0.7),
-              fontSize: 12,
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          // Backup Data (JSON)
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.backup_rounded, size: 20),
-              label: const Text('Backup Data'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.deepPurple,
-                foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              onPressed: () {
-                BackupService.createAndShareBackup(context);
-              },
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Creates a full JSON backup of all your data that you can save and restore later.',
-            style: TextStyle(
-              color: Colors.grey.withValues(alpha: 0.7),
-              fontSize: 12,
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          // Restore Data
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.restore_rounded, size: 20),
-              label: const Text('Restore from Backup'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.indigo,
-                foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              onPressed: () => _pickAndRestoreBackup(),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Pick a previously exported JSON backup file to restore all your data.',
-            style: TextStyle(
-              color: Colors.grey.withValues(alpha: 0.7),
-              fontSize: 12,
-            ),
-          ),
-
-          const Divider(height: 32, color: Colors.grey),
-
-          // Reset All Data
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.delete_forever, size: 20),
-              label: const Text('Reset All Data'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red.withValues(alpha: 0.15),
-                foregroundColor: Colors.red,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  side: BorderSide(
-                    color: Colors.red.withValues(alpha: 0.5),
-                  ),
-                ),
-              ),
-              onPressed: () =>
-                  _showResetDataDialog(userProvider, expenseProvider),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Permanently deletes all expenses, income, categories, accounts, and settings. This cannot be undone.',
-            style: TextStyle(
-              color: Colors.red.withValues(alpha: 0.5),
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _pickAndRestoreBackup() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -1682,12 +1824,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onPressed: () async {
               Navigator.pop(ctx);
 
+              final captureProvider = context.read<CaptureProvider>();
+              final navigator = Navigator.of(context);
+
               await ExpenseSupabaseService.resetAllData();
               expenseProvider.clearUserData();
               await userProvider.clearUser();
 
+              // Start fresh right away (same as a first launch) instead of
+              // leaving an empty app until the next restart.
+              await userProvider.registerUser('LocalUser');
+              await userProvider.initializeExpenseProvider(expenseProvider);
+              await captureProvider.reload();
+
               if (mounted) {
-                Navigator.of(context).popUntil((route) => route.isFirst);
+                navigator.popUntil((route) => route.isFirst);
               }
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
