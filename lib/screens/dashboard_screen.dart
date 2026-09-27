@@ -88,60 +88,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _notifySelectionChanged();
   }
 
-  void _deleteSelected() {
-    final expenseCount = _selectedExpenseIds.length;
-    final incomeCount = _selectedIncomeIds.length;
-    final total = expenseCount + incomeCount;
+  /// Deletes the selection right away; the undo bar (5 s) replaces the old
+  /// "Delete selected?" confirmation.
+  Future<void> _deleteSelected() async {
+    final total = _selectedExpenseIds.length + _selectedIncomeIds.length;
+    if (total == 0) return;
+    final provider = context.read<ExpenseProvider>();
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF2A2A2A),
-        title: const Text('Delete Selected', style: TextStyle(color: Colors.white)),
-        content: Text(
-          'Delete $total selected item${total > 1 ? 's' : ''}?',
-          style: const TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final provider = context.read<ExpenseProvider>();
-              final messenger = ScaffoldMessenger.of(context);
-              // Keep copies so UNDO can re-add them.
-              final deletedExpenses = provider.expenses
-                  .where((e) => _selectedExpenseIds.contains(e.id))
-                  .toList();
-              final deletedIncomes = provider.incomes
-                  .where((i) => _selectedIncomeIds.contains(i.id))
-                  .toList();
-              final expenseIds = _selectedExpenseIds.toList();
-              final incomeIds = _selectedIncomeIds.toList();
-              _clearSelection();
-              for (final id in expenseIds) {
-                await provider.deleteExpense(id);
-              }
-              for (final id in incomeIds) {
-                await provider.deleteIncome(id);
-              }
-              messenger.hideCurrentSnackBar();
-              messenger.showSnackBar(undoSnackBar(
-                'Deleted $total item${total > 1 ? 's' : ''}',
-                () async {
-                  await provider.restoreExpenses(deletedExpenses);
-                  await provider.restoreIncomes(deletedIncomes);
-                },
-              ));
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+    // Keep copies so UNDO can re-add them.
+    final deletedExpenses = provider.expenses
+        .where((e) => _selectedExpenseIds.contains(e.id))
+        .toList();
+    final deletedIncomes = provider.incomes
+        .where((i) => _selectedIncomeIds.contains(i.id))
+        .toList();
+    final expenseIds = _selectedExpenseIds.toList();
+    final incomeIds = _selectedIncomeIds.toList();
+    _clearSelection();
+
+    for (final id in expenseIds) {
+      await provider.deleteExpense(id);
+    }
+    for (final id in incomeIds) {
+      await provider.deleteIncome(id);
+    }
+    showUndo(
+      'Deleted $total item${total > 1 ? 's' : ''}',
+      () async {
+        await provider.restoreExpenses(deletedExpenses);
+        await provider.restoreIncomes(deletedIncomes);
+      },
     );
   }
 

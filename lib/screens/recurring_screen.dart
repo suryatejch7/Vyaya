@@ -173,15 +173,12 @@ class _RecurringTile extends StatelessWidget {
                 icon: const Icon(Icons.more_vert, color: Colors.grey, size: 20),
                 onSelected: (value) {
                   if (value != 'delete') return;
-                  final messenger = ScaffoldMessenger.of(context);
                   final deleted = entry;
                   provider.deleteRecurring(entry.id);
-                  messenger.hideCurrentSnackBar();
-                  messenger.showSnackBar(undoSnackBar(
+                  showUndo(
                     '"${deleted.title}" deleted',
                     () => provider.addRecurring(deleted),
-                    bottomMargin: 16,
-                  ));
+                  );
                 },
                 itemBuilder: (context) => const [
                   PopupMenuItem(

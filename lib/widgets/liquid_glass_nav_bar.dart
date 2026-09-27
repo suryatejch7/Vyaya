@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:vector_math/vector_math_64.dart' as vmath;
 import '../models/quick_action_item.dart';
 import '../widgets/glass_bottom_sheet.dart';
+import 'undo_snackbar.dart';
 import '../screens/search_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/analytics_screen.dart';
@@ -224,7 +225,15 @@ class _GlassNavBarState extends State<GlassNavBar>
       bottom: 30,
       left: 0,
       right: 0,
-      child: Center(
+      child: ValueListenableBuilder<UndoRequest?>(
+        valueListenable: UndoController.current,
+        // Undo pill takes this spot for 5 s; fade the nav bar out meanwhile.
+        builder: (context, undo, child) => AnimatedOpacity(
+          opacity: undo == null ? 1 : 0,
+          duration: const Duration(milliseconds: 200),
+          child: IgnorePointer(ignoring: undo != null, child: child),
+        ),
+        child: Center(
         child: AnimatedBuilder(
           animation: Listenable.merge([_scaleAnimation, _swipeAnimation]),
           builder: (context, child) {
@@ -359,6 +368,7 @@ class _GlassNavBarState extends State<GlassNavBar>
             );
           },
         ),
+      ),
       ),
     );
   }

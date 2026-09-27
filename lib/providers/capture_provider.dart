@@ -395,6 +395,7 @@ class CaptureProvider extends ChangeNotifier {
     var cat = category ?? item.category;
     if (!names.contains(cat)) cat = names.contains('Other') ? 'Other' : cat;
 
+    final accountId = await _resolveAccount(item);
     String? entryId;
     if (item.isDebit) {
       final tag = 'cap-${item.id}';
@@ -406,7 +407,7 @@ class CaptureProvider extends ChangeNotifier {
         paymentApp: item.appLabel,
         transactionId: tag,
         notes: 'Auto-detected from ${item.appLabel}',
-        accountId: ep.defaultAccount?.id,
+        accountId: accountId,
         createdAt: now,
         updatedAt: now,
       ));
@@ -423,7 +424,7 @@ class CaptureProvider extends ChangeNotifier {
         source: item.appLabel,
         date: item.occurredAt,
         notes: 'Auto-detected from ${item.appLabel}',
-        accountId: ep.defaultAccount?.id,
+        accountId: accountId,
         createdAt: now,
         updatedAt: now,
       ));
@@ -478,6 +479,30 @@ class CaptureProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Dismisses everything waiting for review. Returns their ids (for undo).
+  Future<List<String>> dismissAll() async {
+    final ids = pending.map((i) => i.id).toList();
+    for (final id in ids) {
+      final item = byId(id);
+      if (item != null) _replace(item.copyWith(status: 'dismissed'));
+    }
+    await _save();
+    notifyListeners();
+    return ids;
+  }
+
+  /// Undo for [dismissAll].
+  Future<void> restoreMany(List<String> ids) async {
+    for (final id in ids) {
+      final item = byId(id);
+      if (item != null && item.status == 'dismissed') {
+        _replace(item.copyWith(status: 'pending'));
+      }
+    }
+    await _save();
+    notifyListeners();
+  }
+
   /// Moves a dismissed / "already logged" item back to review.
   Future<void> restore(String id) async {
     final item = byId(id);
@@ -517,6 +542,102 @@ class CaptureProvider extends ChangeNotifier {
     if (k.length < 2) return;
     _rules[k] = category;
     _saveRules();
+  }
+
+  // --------------------------------------------------------- bank accounts
+
+  /// (pattern, account name, name keys for matching existing accounts, card)
+  /// Order matters: "SBI Card" before "SBI", payments banks before "Paytm".
+  static final List<(RegExp, String, List<String>, bool)> _banks = [
+    (RegExp(r'\bsbi\s*card\b|\bsbicrd\b', caseSensitive: false), 'SBI Card', ['sbicard', 'sbi'], true),
+    (RegExp(r'\bpaytm\s*payments?\s*bank\b', caseSensitive: false), 'Paytm Payments Bank', ['paytm'], false),
+    (RegExp(r'\bairtel\s*payments?\s*bank\b', caseSensitive: false), 'Airtel Payments Bank', ['airtel'], false),
+    (RegExp(r'\bhdfc\b', caseSensitive: false), 'HDFC Bank', ['hdfc'], false),
+    (RegExp(r'\bicici\b', caseSensitive: false), 'ICICI Bank', ['icici'], false),
+    (RegExp(r'\baxis\b', caseSensitive: false), 'Axis Bank', ['axis'], false),
+    (RegExp(r'\bkotak\b', caseSensitive: false), 'Kotak Bank', ['kotak'], false),
+    (RegExp(r'\bsbi\b|\bstate\s*bank\s*of\s*india\b', caseSensitive: false), 'SBI', ['sbi', 'statebank'], false),
+    (RegExp(r'\bpnb\b|\bpunjab\s*national\b', caseSensitive: false), 'PNB', ['pnb', 'punjabnational'], false),
+    (RegExp(r'\bbob\b|\bbank\s*of\s*baroda\b', caseSensitive: false), 'Bank of Baroda', ['baroda', 'bob'], false),
+    (RegExp(r'\bcanara\b', caseSensitive: false), 'Canara Bank', ['canara'], false),
+    (RegExp(r'\bidfc\b', caseSensitive: false), 'IDFC First Bank', ['idfc'], false),
+    (RegExp(r'\bunion\s*bank\b', caseSensitive: false), 'Union Bank', ['union'], false),
+    (RegExp(r'\bfederal\s*bank\b', caseSensitive: false), 'Federal Bank', ['federal'], false),
+    (RegExp(r'\byes\s*bank\b', caseSensitive: false), 'Yes Bank', ['yesbank'], false),
+    (RegExp(r'\bindusind\b', caseSensitive: false), 'IndusInd Bank', ['indusind'], false),
+    (RegExp(r'\bau\s*(small\s*finance\s*)?bank\b', caseSensitive: false), 'AU Bank', ['aubank', 'ausmall'], false),
+    (RegExp(r'\bidbi\b', caseSensitive: false), 'IDBI Bank', ['idbi'], false),
+    (RegExp(r'\bindian\s*overseas\b|\biob\b', caseSensitive: false), 'IOB', ['iob', 'indianoverseas'], false),
+    (RegExp(r'\bindian\s*bank\b', caseSensitive: false), 'Indian Bank', ['indianbank'], false),
+    (RegExp(r'\buco\b', caseSensitive: false), 'UCO Bank', ['uco'], false),
+    (RegExp(r'\bcentral\s*bank\b', caseSensitive: false), 'Central Bank', ['centralbank'], false),
+    (RegExp(r'\bciti(bank)?\b', caseSensitive: false), 'Citi', ['citi'], false),
+    (RegExp(r'\bhsbc\b', caseSensitive: false), 'HSBC', ['hsbc'], false),
+    (RegExp(r'\brbl\b', caseSensitive: false), 'RBL Bank', ['rbl'], false),
+  ];
+  static final _creditCard = RegExp(r'\bcredit\s*card\b', caseSensitive: false);
+
+  /// Which of *your* banks/cards the payment came from, if the message says.
+  /// Payee UPI handles ("swiggy@icici") and UPI paths are ignored so the
+  /// payee's bank is never mistaken for yours.
+  static (String, List<String>, bool)? _detectBank(DetectedTransaction item) {
+    final text = item.rawText
+        .replaceAll(RegExp(r'\S+@\S+'), ' ')
+        .replaceAll(RegExp(r'\b(?:upi|imps|neft)\/\S+', caseSensitive: false), ' ');
+    final sources = [
+      if (item.sourceKind == 'sms' && item.appLabel != 'Bank SMS') item.appLabel,
+      text,
+    ];
+    for (final src in sources) {
+      for (final b in _banks) {
+        if (b.$1.hasMatch(src)) {
+          return (b.$2, b.$3, b.$4 || _creditCard.hasMatch(text));
+        }
+      }
+    }
+    return null;
+  }
+
+  /// The account to log this payment against: an existing account for that
+  /// bank (card vs bank account, last 4 digits as tie-breaker), a newly
+  /// created one if you don't have it yet, or your default account when the
+  /// message doesn't name a bank.
+  Future<String?> _resolveAccount(DetectedTransaction item) async {
+    final ep = _expenses!;
+    final bank = _detectBank(item);
+    if (bank == null) return ep.defaultAccount?.id;
+    final (bankName, keys, isCard) = bank;
+
+    String norm(String s) => s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    final candidates = ep.accounts
+        .where((a) => keys.any((k) => norm(a.name).contains(k)))
+        .where((a) => a.isCreditCard == isCard)
+        .toList();
+    if (candidates.isNotEmpty) {
+      if (item.last4 != null) {
+        for (final a in candidates) {
+          if (a.name.contains(item.last4!)) return a.id;
+        }
+      }
+      return candidates.first.id;
+    }
+
+    final account = BankAccount(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: isCard && !bankName.endsWith('Card')
+          ? '$bankName Credit Card'
+          : bankName,
+      isDefault: ep.accounts.isEmpty,
+      type: isCard ? AccountType.creditCard : AccountType.savings,
+    );
+    await ep.addAccount(account);
+    return account.id;
+  }
+
+  /// Account for the "Edit" flow (creates it if needed, like Add does).
+  Future<String?> accountFor(String id) async {
+    final item = byId(id);
+    return item == null ? _expenses?.defaultAccount?.id : _resolveAccount(item);
   }
 
   // ---------------------------------------------------------------- labels

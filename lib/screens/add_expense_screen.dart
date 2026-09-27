@@ -13,6 +13,7 @@ class AddExpenseScreen extends StatefulWidget {
   final String? prefilledCategory;
   final String? prefilledNotes;
   final DateTime? prefilledDate;
+  final String? prefilledAccountId;
   final bool autoSave;
   final ExtractedTransaction? extractedData;
 
@@ -26,6 +27,7 @@ class AddExpenseScreen extends StatefulWidget {
     this.prefilledCategory,
     this.prefilledNotes,
     this.prefilledDate,
+    this.prefilledAccountId,
     this.autoSave = false,
     this.extractedData,
   });
@@ -79,6 +81,10 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
 
       if (widget.prefilledDate != null) {
         _selectedDate = widget.prefilledDate!;
+      }
+
+      if (widget.prefilledAccountId != null) {
+        _selectedAccountId = widget.prefilledAccountId;
       }
     }
   }

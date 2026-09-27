@@ -181,14 +181,12 @@ class ExpenseCard extends StatelessWidget {
   /// Deletes right away and offers UNDO for 5 seconds.
   void _deleteWithUndo(BuildContext context) {
     final provider = context.read<ExpenseProvider>();
-    final messenger = ScaffoldMessenger.of(context);
     final deleted = expense;
     if (expense.id == null) return;
     provider.deleteExpense(expense.id!);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(undoSnackBar(
+    showUndo(
       '"${deleted.description}" deleted',
       () => provider.restoreExpenses([deleted]),
-    ));
+    );
   }
 }

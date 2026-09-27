@@ -311,15 +311,12 @@ class _DebtTile extends StatelessWidget {
                       const Icon(Icons.more_vert, color: Colors.grey, size: 20),
                   onSelected: (value) {
                     if (value != 'delete') return;
-                    final messenger = ScaffoldMessenger.of(context);
                     final deleted = entry;
                     provider.deleteDebt(entry.id);
-                    messenger.hideCurrentSnackBar();
-                    messenger.showSnackBar(undoSnackBar(
+                    showUndo(
                       'Entry for ${deleted.person} deleted',
                       () => provider.addDebt(deleted),
-                      bottomMargin: 16,
-                    ));
+                    );
                   },
                   itemBuilder: (context) => const [
                     PopupMenuItem(

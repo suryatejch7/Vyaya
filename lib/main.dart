@@ -10,6 +10,7 @@ import 'services/backup_service.dart';
 import 'services/notification_service.dart';
 import 'services/cache_service.dart';
 import 'theme/app_theme.dart';
+import 'widgets/undo_bar.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,7 +46,8 @@ class MyApp extends StatelessWidget {
         theme: AppTheme.darkTheme,
         home: const AppBootstrap(),
         debugShowCheckedModeBanner: false,
-        builder: (context, child) => _SystemNavBarGuard(child: child!),
+        builder: (context, child) =>
+            _SystemNavBarGuard(child: UndoHost(child: child!)),
       ),
     );
   }

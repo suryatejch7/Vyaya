@@ -6,6 +6,7 @@ import '../providers/capture_provider.dart';
 import '../providers/expense_provider.dart';
 import '../services/capture/capture_models.dart';
 import 'add_expense_screen.dart';
+import '../widgets/undo_snackbar.dart';
 
 /// Review list for payments picked up from bank SMS / payment apps.
 class DetectedPaymentsScreen extends StatelessWidget {
@@ -27,6 +28,18 @@ class DetectedPaymentsScreen extends StatelessWidget {
             backgroundColor: Colors.black,
             foregroundColor: Colors.white,
             actions: [
+              if (pending.length > 1)
+                TextButton(
+                  onPressed: () async {
+                    final ids = await cap.dismissAll();
+                    showUndo(
+                      'Dismissed ${ids.length} payments',
+                      () => cap.restoreMany(ids),
+                    );
+                  },
+                  child: const Text('Dismiss all',
+                      style: TextStyle(color: Colors.grey)),
+                ),
               if (pending.length > 1)
                 TextButton(
                   onPressed: () async {
@@ -224,9 +237,10 @@ class _DetectedCardState extends State<_DetectedCard> {
 
   Future<void> _editAndAdd() async {
     final cap = context.read<CaptureProvider>();
+    final navigator = Navigator.of(context);
     final item = widget.item;
-    final saved = await Navigator.push<bool>(
-      context,
+    final accountId = await cap.accountFor(item.id);
+    final saved = await navigator.push<bool>(
       MaterialPageRoute(
         builder: (context) => AddExpenseScreen(
           prefilledAmount: item.amount,
@@ -236,6 +250,7 @@ class _DetectedCardState extends State<_DetectedCard> {
           prefilledCategory: item.category,
           prefilledNotes: 'Auto-detected from ${item.appLabel}',
           prefilledDate: item.occurredAt,
+          prefilledAccountId: accountId,
         ),
       ),
     );
