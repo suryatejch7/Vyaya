@@ -43,7 +43,7 @@ dependencies:
   # OCR and image processing
   google_mlkit_text_recognition: ^0.15.0
   image_picker: ^1.2.0
-  receive_sharing_intent: ^1.8.1
+  receive_sharing_intent: 1.8.1 # pinned: 1.9.0 needs compileSdk 37 + AGP 9
   vector_math: ^2.1.4
   image: ^4.1.3
 

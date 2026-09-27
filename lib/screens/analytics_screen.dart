@@ -565,18 +565,18 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       title: 'Budget Tracking',
       child: Column(
         children: [
-          // Overall Budget
-          if (provider.monthlyBudget > 0) ...[
+          // Overall: this month's spending vs this month's income
+          ...[
             Container(
               margin: const EdgeInsets.only(bottom: 16),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: provider.isOverBudget
+                color: provider.isOverspent
                     ? Colors.red.withValues(alpha: 0.1)
                     : Colors.green.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: provider.isOverBudget ? Colors.red : Colors.green,
+                  color: provider.isOverspent ? Colors.red : Colors.green,
                 ),
               ),
               child: Column(
@@ -586,16 +586,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text(
-                        'Monthly Budget',
+                        'Income vs Spent',
                         style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       Text(
-                        provider.isOverBudget ? 'Over Budget' : 'On Track',
+                        provider.isOverspent ? 'Overspent' : 'On Track',
                         style: TextStyle(
-                          color: provider.isOverBudget
+                          color: provider.isOverspent
                               ? Colors.red
                               : Colors.green,
                           fontWeight: FontWeight.bold,
@@ -605,13 +605,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   ),
                   const SizedBox(height: 8),
                   LinearProgressIndicator(
-                    value:
-                        (provider.currentMonthTotalExpense /
-                                provider.monthlyBudget)
-                            .clamp(0.0, 1.0),
+                    value: provider.totalIncomeThisMonth > 0
+                        ? (provider.currentMonthTotalExpense /
+                                provider.totalIncomeThisMonth)
+                            .clamp(0.0, 1.0)
+                        : (provider.currentMonthTotalExpense > 0 ? 1.0 : 0.0),
                     backgroundColor: Colors.grey.withValues(alpha: 0.3),
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      provider.isOverBudget ? Colors.red : Colors.green,
+                      provider.isOverspent ? Colors.red : Colors.green,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -623,15 +624,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         style: const TextStyle(color: Colors.white),
                       ),
                       Text(
-                        'Budget: $currency${provider.monthlyBudget.toStringAsFixed(0)}',
+                        'Income: $currency${provider.totalIncomeThisMonth.toStringAsFixed(0)}',
                         style: const TextStyle(color: Colors.white),
                       ),
                     ],
                   ),
-                  if (provider.isOverBudget) ...[
+                  if (provider.isOverspent) ...[
                     const SizedBox(height: 4),
                     Text(
-                      'Over by: $currency${provider.budgetExcess.toStringAsFixed(0)}',
+                      'Over by: $currency${provider.overspentBy.toStringAsFixed(0)}',
                       style: const TextStyle(
                         color: Colors.red,
                         fontWeight: FontWeight.bold,
@@ -929,12 +930,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     // Only show budget warnings for Month view
     if (_selectedPeriod == 'Month') {
-      if (provider.isOverBudget) {
+      if (provider.isOverspent) {
         insights.add({
           'icon': Icons.warning,
           'color': Colors.red,
           'text':
-              'You\'ve exceeded your monthly budget by $currency${provider.budgetExcess.toStringAsFixed(0)}',
+              'You\'ve spent $currency${provider.overspentBy.toStringAsFixed(0)} more than your income this month',
         });
       }
 
@@ -1015,8 +1016,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     Map<String, double> totals = {};
     for (var expense in filteredExpenses) {
-      totals[expense.category] =
-          (totals[expense.category] ?? 0) + expense.amount;
+      final key = provider.categoryBucket(expense.category);
+      totals[key] = (totals[key] ?? 0) + expense.amount;
     }
     return totals;
   }

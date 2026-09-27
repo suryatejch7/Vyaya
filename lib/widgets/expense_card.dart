@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/expense_models.dart';
 import '../providers/expense_provider.dart';
+import 'undo_snackbar.dart';
 import '../screens/add_expense_screen.dart';
 
 class ExpenseCard extends StatelessWidget {
@@ -136,7 +137,7 @@ class ExpenseCard extends StatelessWidget {
                 icon: const Icon(Icons.more_vert, color: Colors.grey, size: 20),
                 onSelected: (value) {
                   if (value == 'delete') {
-                    _showDeleteDialog(context);
+                    _deleteWithUndo(context);
                   }
                 },
                 itemBuilder: (context) => [
@@ -160,56 +161,34 @@ class ExpenseCard extends StatelessWidget {
   }
 
   String _formatDate(DateTime date) {
+    // Compare calendar days, not 24h periods: 11pm yesterday is "Yesterday".
     final now = DateTime.now();
-    final difference = now.difference(date).inDays;
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(date.year, date.month, date.day);
+    final difference = today.difference(day).inDays;
 
     if (difference == 0) {
       return 'Today';
     } else if (difference == 1) {
       return 'Yesterday';
-    } else if (difference < 7) {
+    } else if (difference > 1 && difference < 7) {
       return '$difference days ago';
     } else {
       return '${date.day}/${date.month}/${date.year}';
     }
   }
 
-  void _showDeleteDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF2A2A2A),
-          title: const Text(
-            'Delete Expense',
-            style: TextStyle(color: Colors.white),
-          ),
-          content: Text(
-            'Are you sure you want to delete "${expense.description}"?',
-            style: const TextStyle(color: Colors.white),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                context.read<ExpenseProvider>().deleteExpense(expense.id!);
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('${expense.description} deleted'),
-                    backgroundColor: Colors.red,
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-              },
-              child: const Text('Delete', style: TextStyle(color: Colors.red)),
-            ),
-          ],
-        );
-      },
-    );
+  /// Deletes right away and offers UNDO for 5 seconds.
+  void _deleteWithUndo(BuildContext context) {
+    final provider = context.read<ExpenseProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final deleted = expense;
+    if (expense.id == null) return;
+    provider.deleteExpense(expense.id!);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(undoSnackBar(
+      '"${deleted.description}" deleted',
+      () => provider.restoreExpenses([deleted]),
+    ));
   }
 }

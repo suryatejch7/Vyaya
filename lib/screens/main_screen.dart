@@ -18,7 +18,7 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
   bool _isSelectionMode = false;
   int _selectedCount = 0;
@@ -30,6 +30,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _screens.addAll([
       DashboardScreen(
         onSelectionChanged:
@@ -49,6 +50,22 @@ class _MainScreenState extends State<MainScreen> {
       IntentService.setContext(context);
       _checkDataConsistency();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// When the app comes back to the foreground (possibly on a new day or
+  /// month), create any recurring entries that became due and close out
+  /// finished months into "Saved".
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      context.read<ExpenseProvider>().runAutomations();
+    }
   }
 
   Future<void> _checkDataConsistency() async {

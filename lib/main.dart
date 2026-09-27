@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/expense_provider.dart';
@@ -42,6 +43,7 @@ class MyApp extends StatelessWidget {
         theme: AppTheme.darkTheme,
         home: const AppBootstrap(),
         debugShowCheckedModeBanner: false,
+        builder: (context, child) => _SystemNavBarGuard(child: child!),
       ),
     );
   }
@@ -71,9 +73,16 @@ class _AppBootstrapState extends State<AppBootstrap> {
     // Try to load existing user
     await userProvider.loadUserFromStorage();
 
-    // If no user exists, create a default local user automatically
+    // No user selected (fresh install, or data restored from a backup /
+    // auto-backup without the `userId` pref): adopt an existing user if the
+    // storage has one, otherwise create the default local user.
     if (!userProvider.isLoggedIn) {
-      await userProvider.registerUser('LocalUser');
+      final existing = await userProvider.getAllUsers();
+      if (existing.isNotEmpty) {
+        await userProvider.loginWithUserId(existing.first.id);
+      } else {
+        await userProvider.registerUser('LocalUser');
+      }
     }
 
     // Initialize expense provider with the user
@@ -97,5 +106,46 @@ class _AppBootstrapState extends State<AppBootstrap> {
       );
     }
     return const MainScreen();
+  }
+}
+
+/// Keeps the whole app (screens, bottom sheets, dialogs) above the Android
+/// 3-button / 2-button navigation bar when running edge-to-edge.
+///
+/// Gesture navigation reports a small bottom inset (~16-24dp) and is left
+/// untouched; button navigation reports ~48dp, so anything above the
+/// threshold gets padded out and removed from the inner MediaQuery.
+class _SystemNavBarGuard extends StatelessWidget {
+  const _SystemNavBarGuard({required this.child});
+
+  final Widget child;
+
+  static const double _buttonNavThreshold = 32;
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    final navInset = mq.viewPadding.bottom;
+
+    if (navInset <= _buttonNavThreshold) return child;
+
+    return ColoredBox(
+      color: Colors.black,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: navInset),
+        child: MediaQuery(
+          data: mq.copyWith(
+            padding: mq.padding.copyWith(bottom: 0),
+            viewPadding: mq.viewPadding.copyWith(bottom: 0),
+            // Keyboard inset is measured from the screen bottom; subtract the
+            // nav bar we've already padded for so forms don't over-shift.
+            viewInsets: mq.viewInsets.copyWith(
+              bottom: math.max(0.0, mq.viewInsets.bottom - navInset),
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
   }
 }

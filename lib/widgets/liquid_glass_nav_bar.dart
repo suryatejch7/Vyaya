@@ -6,7 +6,8 @@ import '../widgets/glass_bottom_sheet.dart';
 import '../screens/search_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/analytics_screen.dart';
-import '../screens/crop_calibration_screen.dart';
+import '../screens/recurring_screen.dart';
+import '../screens/lent_borrowed_screen.dart';
 
 class GlassNavBar extends StatefulWidget {
   final int currentIndex;
@@ -132,20 +133,6 @@ class _GlassNavBarState extends State<GlassNavBar>
   List<QuickActionItem> _getAllQuickActionItems() {
     return [
       QuickActionItem(
-        id: 'search',
-        icon: Icons.search,
-        title: 'Search',
-        subtitle: 'Find specific expenses',
-        color: Colors.blue,
-        onTap: () {
-          Navigator.pop(context);
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const SearchScreen()),
-          );
-        },
-      ),
-      QuickActionItem(
         id: 'analytics',
         icon: Icons.pie_chart_outline,
         title: 'Analytics',
@@ -160,17 +147,31 @@ class _GlassNavBarState extends State<GlassNavBar>
         },
       ),
       QuickActionItem(
-        id: 'crop_calibration',
-        icon: Icons.crop_free,
-        title: 'Crop Calibration',
-        subtitle: 'Calibrate PhonePe OCR',
-        color: Colors.orange,
+        id: 'recurring',
+        icon: Icons.repeat,
+        title: 'Recurring',
+        subtitle: 'Monthly income & bills',
+        color: Colors.teal,
+        onTap: () {
+          Navigator.pop(context);
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const RecurringScreen()),
+          );
+        },
+      ),
+      QuickActionItem(
+        id: 'lent_borrowed',
+        icon: Icons.handshake_outlined,
+        title: 'Lent & Borrowed',
+        subtitle: 'Money with friends',
+        color: Colors.amber,
         onTap: () {
           Navigator.pop(context);
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => const CropCalibrationScreen(),
+              builder: (context) => const LentBorrowedScreen(),
             ),
           );
         },
@@ -231,6 +232,13 @@ class _GlassNavBarState extends State<GlassNavBar>
               scale: _scaleAnimation.value * 0.9, // Scale down the nav bar
               child: GestureDetector(
                 onHorizontalDragEnd: _handleHorizontalSwipe,
+                // Swipe up anywhere on the bar -> Analytics / Recurring /
+                // Lent & Borrowed / Settings sheet.
+                onVerticalDragEnd: (details) {
+                  if (widget.isSelectionMode) return;
+                  final v = details.primaryVelocity;
+                  if (v != null && v < -200) _showQuickActions();
+                },
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(35),
                   child: BackdropFilter(
@@ -283,7 +291,9 @@ class _GlassNavBarState extends State<GlassNavBar>
                           ),
                         ],
                       ),
-                      child: Row(
+                      child: Stack(
+                        children: [
+                      Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: widget.isSelectionMode
                             ? [
@@ -307,7 +317,7 @@ class _GlassNavBarState extends State<GlassNavBar>
                                   activeIcon: Icons.dashboard,
                                   label: 'Home',
                                 ),
-                                _buildActionsNavItem(),
+                                _buildSearchNavItem(),
                                 _buildNavItem(
                                   index: 1,
                                   icon: Icons.pie_chart_outline_rounded,
@@ -315,6 +325,28 @@ class _GlassNavBarState extends State<GlassNavBar>
                                   label: 'Categories',
                                 ),
                               ],
+                      ),
+                          // Grab handle: hints "swipe up for more"
+                          if (!widget.isSelectionMode)
+                            Positioned(
+                              top: 5,
+                              left: 0,
+                              right: 0,
+                              child: IgnorePointer(
+                                child: Center(
+                                  child: Container(
+                                    width: 28,
+                                    height: 3,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white
+                                          .withValues(alpha: 0.45),
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
@@ -388,14 +420,14 @@ class _GlassNavBarState extends State<GlassNavBar>
     );
   }
 
-  Widget _buildActionsNavItem() {
+  /// Middle button: opens the Search screen (same one the sheet used to).
+  Widget _buildSearchNavItem() {
     return GestureDetector(
-      onTap: () => _showQuickActions(),
-      onVerticalDragEnd: (details) {
-        if (details.primaryVelocity != null && details.primaryVelocity! < 0) {
-          _showQuickActions();
-        }
-      },
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const SearchScreen()),
+      ),
+      onLongPress: _showQuickActions, // backup for the swipe-up gesture
       child: Container(
         width: 80,
         height: 50,
@@ -407,13 +439,13 @@ class _GlassNavBarState extends State<GlassNavBar>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              Icons.bolt_rounded,
+              Icons.search_rounded,
               color: Colors.white.withValues(alpha: 0.7),
               size: 24,
             ),
             const SizedBox(height: 2),
             Text(
-              'Actions',
+              'Search',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.7),
                 fontWeight: FontWeight.normal,

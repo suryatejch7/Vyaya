@@ -7,6 +7,7 @@ import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 import '../services/export_service.dart';
 import '../services/backup_service.dart';
+import 'crop_calibration_screen.dart';
 import 'package:file_picker/file_picker.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -18,12 +19,25 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _budgetController = TextEditingController();
   final TextEditingController _categoryNameController = TextEditingController();
   final TextEditingController _categoryBudgetController = TextEditingController();
 
   bool _isEditingName = false;
   bool _isAddingCategory = false;
+
+  // Multi-select delete for categories (long-press to enter)
+  final Set<String> _selectedCategoryIds = {};
+  bool get _isCategorySelectionMode => _selectedCategoryIds.isNotEmpty;
+
+  void _toggleCategorySelection(String id) {
+    setState(() {
+      if (!_selectedCategoryIds.remove(id)) _selectedCategoryIds.add(id);
+    });
+  }
+
+  void _clearCategorySelection() {
+    setState(_selectedCategoryIds.clear);
+  }
 
   @override
   void initState() {
@@ -35,7 +49,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _nameController.dispose();
-    _budgetController.dispose();
     _categoryNameController.dispose();
     _categoryBudgetController.dispose();
     super.dispose();
@@ -44,26 +57,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _loadUserData() {
     final provider = context.read<ExpenseProvider>();
     _nameController.text = provider.userName;
-    _budgetController.text = provider.monthlyBudget.toString();
   }
 
-  Future<void> _saveUserName() async {
+  /// Saves the name. Returns true on success, false on failure, or null if
+  /// nothing changed (empty or same name) — in every case the editor closes.
+  Future<bool?> _saveUserName() async {
     final newName = _nameController.text.trim();
-    if (newName.isNotEmpty && newName != context.read<ExpenseProvider>().userName) {
-      // Update username through UserProvider only
-      final userProvider = context.read<UserProvider>();
-      if (userProvider.currentUser != null) {
-        await userProvider.updateUserName(newName);
-      }
-      setState(() {
-        _isEditingName = false;
-      });
+    final userProvider = context.read<UserProvider>();
+    final expenseProvider = context.read<ExpenseProvider>();
+
+    if (newName.isEmpty || newName == userProvider.userName) {
+      _nameController.text = userProvider.userName;
+      setState(() => _isEditingName = false);
+      return null;
     }
+
+    // UserProvider persists it; ExpenseProvider keeps its own copy of the
+    // name, so sync that too or other screens keep showing the old one.
+    final ok = await userProvider.updateUserName(newName);
+    if (ok) expenseProvider.updateLocalUserName(newName);
+
+    if (mounted) setState(() => _isEditingName = false);
+    return ok;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: !_isCategorySelectionMode,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _isCategorySelectionMode) _clearCategorySelection();
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         title: const Text(
@@ -76,7 +101,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            Navigator.of(context).pop();
+            Navigator.of(context).maybePop();
           },
         ),
       ),
@@ -123,16 +148,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                         onPressed: () async {
                                           final scaffoldMessenger = ScaffoldMessenger.of(context);
                                           final theme = Theme.of(context);
-                                          await _saveUserName();
-                                          if (mounted) {
-                                            scaffoldMessenger.showSnackBar(
-                                              SnackBar(
-                                                content: const Text('Name updated successfully!'),
-                                                backgroundColor: theme.colorScheme.primary,
-                                                duration: const Duration(seconds: 1),
-                                              ),
-                                            );
-                                          }
+                                          final result = await _saveUserName();
+                                          if (!mounted || result == null) return;
+                                          scaffoldMessenger.showSnackBar(
+                                            SnackBar(
+                                              content: Text(result
+                                                  ? 'Name updated successfully!'
+                                                  : 'Failed to update name'),
+                                              backgroundColor: result
+                                                  ? theme.colorScheme.primary
+                                                  : Colors.red,
+                                              duration: const Duration(seconds: 1),
+                                            ),
+                                          );
                                         },
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor: Theme.of(context).colorScheme.primary,
@@ -165,9 +193,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
                                       Text(
-                                        expenseProvider.userName.isEmpty ? 'Tap to set name' : expenseProvider.userName,
+                                        userProvider.userName.isEmpty ? 'Tap to set name' : userProvider.userName,
                                         style: TextStyle(
-                                          color: expenseProvider.userName.isEmpty ? Colors.grey : Colors.white,
+                                          color: userProvider.userName.isEmpty ? Colors.grey : Colors.white,
                                           fontSize: 16,
                                         ),
                                       ),
@@ -189,77 +217,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 const SizedBox(height: 20),
 
-                // Budget Section
-                _buildSectionCard(
-                  title: 'Monthly Budget',
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _budgetController,
-                          style: const TextStyle(color: Colors.white),
-                          keyboardType: TextInputType.number,
-                          decoration: InputDecoration(
-                            labelText: 'Monthly Budget (₹)',
-                            labelStyle: const TextStyle(color: Colors.grey),
-                            prefixText: '₹ ',
-                            prefixStyle: const TextStyle(color: Colors.white),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                            ),
-                          ),
-                          onSubmitted: (value) {
-                            final budget = double.tryParse(value) ?? 0;
-                            expenseProvider.updateMonthlyBudget(budget);
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      ElevatedButton(
-                        onPressed: () {
-                          final budget = double.tryParse(_budgetController.text) ?? 0;
-                          expenseProvider.updateMonthlyBudget(budget);
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: const Text('Budget updated successfully!'),
-                                backgroundColor: Theme.of(context).colorScheme.primary,
-                                duration: const Duration(seconds: 1),
-                              ),
-                            );
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(context).colorScheme.primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                        ),
-                        child: const Text('Update'),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
                 // Categories Section
                 Container(
                   margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -274,7 +231,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Header with title and add button
+                      // Header with title and add button (or selection bar)
+                      if (_isCategorySelectionMode)
+                        _buildCategorySelectionBar(expenseProvider)
+                      else
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -374,17 +334,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             final budget = expenseProvider.getCustomCategoryBudget(category.id);
                             final spent = expenseProvider.getCustomCategoryExpenses(category.id);
                             final isOverBudget = budget > 0 && spent > budget;
+                            final isSelected = _selectedCategoryIds.contains(category.id);
 
-                            return Container(
+                            return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onLongPress: () => _toggleCategorySelection(category.id),
+                              onTap: _isCategorySelectionMode
+                                  ? () => _toggleCategorySelection(category.id)
+                                  : null,
+                              child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF2A2A2A),
+                                color: isSelected
+                                    ? Colors.red.withValues(alpha: 0.12)
+                                    : const Color(0xFF2A2A2A),
                                 borderRadius: BorderRadius.circular(16),
                                 border: Border.all(
-                                  color: isOverBudget
-                                      ? Colors.red.withValues(alpha: 0.5)
-                                      : category.color.withValues(alpha: 0.3),
-                                  width: isOverBudget ? 2 : 1,
+                                  color: isSelected
+                                      ? Colors.redAccent
+                                      : isOverBudget
+                                          ? Colors.red.withValues(alpha: 0.5)
+                                          : category.color.withValues(alpha: 0.3),
+                                  width: isSelected || isOverBudget ? 2 : 1,
                                 ),
                               ),
                               child: Column(
@@ -408,6 +380,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                           ),
                                         ),
                                       ),
+                                      if (_isCategorySelectionMode)
+                                        Icon(
+                                          isSelected
+                                              ? Icons.check_circle
+                                              : Icons.radio_button_unchecked,
+                                          color: isSelected ? Colors.redAccent : Colors.grey,
+                                          size: 22,
+                                        )
+                                      else
                                       Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
@@ -415,13 +396,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                             onTap: () => _showExpenseCategoryBudgetDialog(category),
                                             child: const Icon(Icons.edit, color: Colors.grey, size: 18),
                                           ),
-                                          if (!category.isDefault) ...[
-                                            const SizedBox(width: 8),
-                                            GestureDetector(
-                                              onTap: () => _showDeleteExpenseCategoryDialog(category),
-                                              child: Icon(Icons.delete, color: Colors.grey.withValues(alpha: 0.7), size: 18),
-                                            ),
-                                          ],
+                                          const SizedBox(width: 8),
+                                          GestureDetector(
+                                            onTap: () => _startCategoryDelete(expenseProvider, [category]),
+                                            child: Icon(Icons.delete, color: Colors.grey.withValues(alpha: 0.7), size: 18),
+                                          ),
                                         ],
                                       ),
                                     ],
@@ -466,6 +445,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   ],
                                 ],
                               ),
+                              ),
                             );
                           },
                         ),
@@ -478,6 +458,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 // Bank Accounts Section
                 _buildAccountsSection(expenseProvider),
+
+                const SizedBox(height: 20),
+
+                // PhonePe scanning (moved here from the quick-actions sheet)
+                _buildSectionCard(
+                  title: 'PhonePe Scanning',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.crop_free, color: Colors.orange),
+                    ),
+                    title: const Text(
+                      'Crop Calibration',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    subtitle: const Text(
+                      'Set which part of a screenshot holds the payee and amount',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                    trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const CropCalibrationScreen(),
+                      ),
+                    ),
+                  ),
+                ),
 
                 const SizedBox(height: 20),
 
@@ -494,6 +508,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           );
         },
+      ),
       ),
     );
   }
@@ -579,7 +594,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   style: TextStyle(color: Colors.white),
                 ),
                 subtitle: const Text(
-                  'Get alerts about budget limits, spending patterns, and reminders',
+                  'Get alerts when spending passes your income or a category limit',
                   style: TextStyle(color: Colors.grey),
                 ),
                 value: isEnabled,
@@ -598,7 +613,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // Test Notification Button
           ElevatedButton.icon(
             onPressed: () async {
-              await NotificationService.checkMonthlyBudgetExceeded(26000, 25000);
+              await NotificationService.checkIncomeExceeded(26000, 25000);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -937,54 +952,143 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showDeleteExpenseCategoryDialog(ExpenseCategory category) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF2A2A2A),
-        title: const Text(
-          'Delete Category',
-          style: TextStyle(color: Colors.white),
+  Widget _buildCategorySelectionBar(ExpenseProvider provider) {
+    final total = provider.customCategories.length;
+    final allSelected = _selectedCategoryIds.length == total;
+    return Row(
+      children: [
+        IconButton(
+          icon: const Icon(Icons.close, color: Colors.white),
+          tooltip: 'Cancel',
+          onPressed: _clearCategorySelection,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
         ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            '${_selectedCategoryIds.length} selected',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        TextButton(
+          onPressed: () => setState(() {
+            if (allSelected) {
+              _selectedCategoryIds.clear();
+            } else {
+              _selectedCategoryIds
+                  .addAll(provider.customCategories.map((c) => c.id));
+            }
+          }),
+          child: Text(allSelected ? 'Deselect all' : 'Select all'),
+        ),
+        IconButton(
+          icon: const Icon(Icons.delete, color: Colors.redAccent),
+          tooltip: 'Delete selected',
+          onPressed: () => _startCategoryDelete(
+            provider,
+            provider.customCategories
+                .where((c) => _selectedCategoryIds.contains(c.id))
+                .toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Delete flow shared by the single delete icon and multi-select:
+  /// 1) confirm, 2) if any category has logged expenses, confirm again with
+  /// per-category "Move to" options, 3) delete (+ reassign).
+  Future<void> _startCategoryDelete(
+      ExpenseProvider provider, List<ExpenseCategory> targets) async {
+    if (targets.isEmpty) return;
+    final label = targets.length == 1
+        ? '"${targets.first.name}"'
+        : '${targets.length} categories';
+    final defaultCount = targets.where((c) => c.isDefault).length;
+
+    // Step 1: basic confirmation
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF2A2A2A),
+        title: Text('Delete $label?',
+            style: const TextStyle(color: Colors.white)),
         content: Text(
-          'Are you sure you want to delete "${category.name}"? This action cannot be undone and all expenses in this category will be moved to "Other".',
+          '${targets.length > 1 ? '${targets.map((c) => c.name).join(', ')}\n\n' : ''}'
+          '${defaultCount > 0 ? 'Includes $defaultCount default ${defaultCount == 1 ? 'category' : 'categories'}.\n\n' : ''}'
+          'This cannot be undone.',
           style: const TextStyle(color: Colors.white),
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              final navigator = Navigator.of(context);
-              navigator.pop();
-            },
+            onPressed: () => Navigator.of(ctx).pop(false),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () async {
-              final navigator = Navigator.of(context);
-              final scaffoldMessenger = ScaffoldMessenger.of(context);
-              
-              await context.read<ExpenseProvider>().removeCustomCategory(category.id);
-              // No need for force refresh - removeCustomCategory already handles local updates
-              navigator.pop();
-
-              if (mounted) {
-                scaffoldMessenger.showSnackBar(
-                  SnackBar(
-                    content: Text('Category "${category.name}" deleted successfully!'),
-                    backgroundColor: Colors.red,
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Delete'),
           ),
         ],
       ),
     );
+    if (confirmed != true || !mounted) return;
+
+    // Step 2: check logged expenses (full storage)
+    final counts =
+        await provider.getExpenseCountsForCategories(targets.map((c) => c.name));
+    if (!mounted) return;
+
+    Map<String, String> reassign = const {};
+    if (counts.isNotEmpty) {
+      final targetIds = targets.map((c) => c.id).toSet();
+      final remaining = provider.customCategories
+          .where((c) => !targetIds.contains(c.id))
+          .toList();
+      final affected = targets.where((c) => counts.containsKey(c.name)).toList();
+
+      final result = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (ctx) => _LoggedExpensesDialog(
+          affected: affected,
+          counts: counts,
+          remaining: remaining,
+        ),
+      );
+      if (result == null || !mounted) return; // cancelled
+      reassign = result;
+    }
+
+    // Step 3: delete
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await provider.removeCustomCategories(
+        targets.map((c) => c.id).toSet(),
+        reassign: reassign,
+      );
+      if (!mounted) return;
+      _clearCategorySelection();
+      final moved = reassign.keys.fold<int>(0, (s, k) => s + (counts[k] ?? 0));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Deleted $label'
+            '${moved > 0 ? ' · moved $moved ${moved == 1 ? 'expense' : 'expenses'}' : ''}',
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('$e'), backgroundColor: Colors.red),
+      );
+    }
   }
 
   // ==================== ACCOUNTS SECTION ====================
@@ -1642,4 +1746,125 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+}
+
+/// Second confirmation: lists categories that already have logged expenses,
+/// each with a "Move to" dropdown. Pops a map of oldName -> newName for the
+/// categories the user chose to move (empty map = keep all as-is), or null
+/// if cancelled.
+class _LoggedExpensesDialog extends StatefulWidget {
+  final List<ExpenseCategory> affected;
+  final Map<String, int> counts;
+  final List<ExpenseCategory> remaining;
+
+  const _LoggedExpensesDialog({
+    required this.affected,
+    required this.counts,
+    required this.remaining,
+  });
+
+  @override
+  State<_LoggedExpensesDialog> createState() => _LoggedExpensesDialogState();
+}
+
+class _LoggedExpensesDialogState extends State<_LoggedExpensesDialog> {
+  static const _keep = '__keep__';
+  // oldName -> target name; _keep = don't move
+  final Map<String, String> _moveTo = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final total = widget.counts.values.fold<int>(0, (a, b) => a + b);
+    final single = widget.affected.length == 1;
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF2A2A2A),
+      title: const Text('Expenses already logged',
+          style: TextStyle(color: Colors.white)),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                single
+                    ? '"${widget.affected.first.name}" has $total logged ${total == 1 ? 'expense' : 'expenses'}. Delete anyway?'
+                    : 'These categories have $total logged expenses. Delete anyway?',
+                style: const TextStyle(color: Colors.white),
+              ),
+              const SizedBox(height: 16),
+              for (final cat in widget.affected) ...[
+                Row(
+                  children: [
+                    Text(cat.icon, style: const TextStyle(fontSize: 18)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${cat.name} · ${widget.counts[cat.name]} ${widget.counts[cat.name] == 1 ? 'expense' : 'expenses'}',
+                        style: const TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                DropdownButtonFormField<String>(
+                  initialValue: _moveTo[cat.name] ?? _keep,
+                  isExpanded: true,
+                  dropdownColor: const Color(0xFF1E1E1E),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Move expenses to',
+                    labelStyle: TextStyle(color: Colors.grey.shade400),
+                    isDense: true,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: _keep,
+                      child: Text('Keep as-is (don\'t move)'),
+                    ),
+                    for (final r in widget.remaining)
+                      DropdownMenuItem<String>(
+                        value: r.name,
+                        child: Text('${r.icon}  ${r.name}'),
+                      ),
+                  ],
+                  onChanged: (v) => setState(() => _moveTo[cat.name] = v ?? _keep),
+                ),
+                const SizedBox(height: 14),
+              ],
+              if (widget.remaining.isEmpty)
+                Text(
+                  'No other categories left to move expenses into.',
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          onPressed: () {
+            final mapping = <String, String>{
+              for (final e in _moveTo.entries)
+                if (e.value != _keep) e.key: e.value,
+            };
+            Navigator.of(context).pop(mapping);
+          },
+          child: Text(_moveTo.values.any((v) => v != _keep)
+              ? 'Move & delete'
+              : 'Delete'),
+        ),
+      ],
+    );
+  }
 }

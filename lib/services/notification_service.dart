@@ -46,18 +46,20 @@ class NotificationService {
     }
   }
 
-  static Future<void> checkMonthlyBudgetExceeded(
+  /// Alerts when this month's spending goes past this month's income.
+  /// Skipped when no income is logged yet (nothing to compare against).
+  static Future<void> checkIncomeExceeded(
     double monthlySpent,
-    double monthlyBudget,
+    double monthlyIncome,
   ) async {
     if (!await areNotificationsEnabled()) return;
-    if (monthlyBudget <= 0) return;
+    if (monthlyIncome <= 0) return;
 
-    if (monthlySpent >= monthlyBudget) {
-      final overspent = monthlySpent - monthlyBudget;
+    if (monthlySpent > monthlyIncome) {
+      final overspent = monthlySpent - monthlyIncome;
       await _showNotification(
-        'Monthly Budget Exceeded',
-        'You\'ve exceeded your monthly budget by ₹${overspent.toInt()}. Budget: ₹${monthlyBudget.toInt()}',
+        'Spending Exceeded Income',
+        'You\'ve spent ₹${overspent.toInt()} more than your income this month. Income: ₹${monthlyIncome.toInt()}',
         importance: Importance.high,
       );
     }

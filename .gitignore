@@ -114,7 +114,8 @@ local.properties
 # Temporary files
 *.tmp
 *.temp
-*.lock
+# (pubspec.lock is intentionally NOT ignored: apps should commit it so
+#  builds use the exact package versions that were tested)
 
 # Editor directories and files
 .vscode/
@@ -124,8 +125,13 @@ local.properties
 *.sln
 *.sw?
 
-# Ignore Android heap dumps
-android/java_pid21420.hprof
+# Java heap dumps (Gradle writes java_pid<N>.hprof on out-of-memory;
+# can be hundreds of MB)
+*.hprof
+
+# Android build output & logs
+/android/build/
+/android/build_log.txt
 
 # Keystore and signing config
 android/app/expensify-key.jks

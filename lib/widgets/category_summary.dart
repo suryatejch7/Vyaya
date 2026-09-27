@@ -18,9 +18,9 @@ class _CategorySummaryState extends State<CategorySummary> {
     return Consumer<ExpenseProvider>(
       builder: (context, expenseProvider, child) {
         // Use current month data instead of all-time
-        final categoryTotals = expenseProvider.currentMonthCategoryTotals;
+        final categoryTotals = expenseProvider.viewMonthCategoryTotals;
         final categories = expenseProvider.categories;
-        final currentMonthTotal = expenseProvider.currentMonthTotalExpense;
+        final currentMonthTotal = expenseProvider.viewMonthTotalExpense;
         final currency = expenseProvider.currency;
 
         if (categoryTotals.isEmpty) {
@@ -30,9 +30,11 @@ class _CategorySummaryState extends State<CategorySummary> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'This Month by Category',
-              style: TextStyle(
+            Text(
+              expenseProvider.isViewingCurrentMonth
+                  ? 'This Month by Category'
+                  : 'By Category',
+              style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
@@ -48,7 +50,9 @@ class _CategorySummaryState extends State<CategorySummary> {
                   final categoryName = categoryTotals.keys.elementAt(index);
                   final amount = categoryTotals[categoryName]!;
                   final percentage = currentMonthTotal > 0 ? (amount / currentMonthTotal * 100) : 0.0;
-                  final isOverBudget = expenseProvider.isCategoryOverBudget(categoryName);
+                  // Category limits apply to the current month only.
+                  final isOverBudget = expenseProvider.isViewingCurrentMonth &&
+                      expenseProvider.isCategoryOverBudget(categoryName);
                   final budget = expenseProvider.getCategoryBudget(categoryName);
 
                   // Find the category object

@@ -10,6 +10,12 @@ class ExpenseDataManager {
   bool _isLoadingMore = false;
 
   List<Expense> get expenses => _expenses;
+
+  /// Newest expense date first; same date -> most recently logged first.
+  static int byDateDesc(Expense a, Expense b) {
+    final c = b.date.compareTo(a.date);
+    return c != 0 ? c : b.createdAt.compareTo(a.createdAt);
+  }
   bool get hasMoreExpenses => _hasMoreExpenses;
   bool get isLoadingMore => _isLoadingMore;
 
@@ -31,9 +37,10 @@ class ExpenseDataManager {
         }
       }
 
-      mergedExpenses.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      mergedExpenses.sort(byDateDesc);
       _expenses.clear();
       _expenses.addAll(mergedExpenses);
+      _hasMoreExpenses = false; // full list is now in memory
       await CacheService.cacheExpenses(_expenses, userId);
     } catch (e) {
     }
@@ -58,19 +65,20 @@ class ExpenseDataManager {
     }
   }
 
+  /// Initial load. Data is on-device, so load EVERYTHING: totals (Spent,
+  /// Left, categories, analytics) are computed from this list and were
+  /// under-counting when only the first page was loaded.
   Future<void> loadExpensesPaginated(int userId) async {
     try {
       _currentPage = 0;
-      final expenses = await ExpenseSupabaseService.getExpensesPaginated(
-        userId: userId,
-        limit: pageSize,
-        offset: 0,
-      );
+      final expenses = List<Expense>.from(
+        await ExpenseSupabaseService.getExpenses(userId: userId),
+      )..sort(byDateDesc);
       if (expenses.isNotEmpty || _expenses.isEmpty) {
         _expenses.clear();
         _expenses.addAll(expenses);
       }
-      _hasMoreExpenses = expenses.length >= pageSize;
+      _hasMoreExpenses = false;
       await CacheService.cacheExpenses(expenses, userId);
     } catch (e) {
       if (_expenses.isEmpty) {
@@ -119,11 +127,11 @@ class ExpenseDataManager {
   /// Reload expenses from backend
   Future<void> reloadExpenses(int userId) async {
     _currentPage = 0;
-    _hasMoreExpenses = true;
+    _hasMoreExpenses = false; // full list loaded below
 
     final expenses = await ExpenseSupabaseService.getExpenses(userId: userId);
     final sortedExpenses = List<Expense>.from(expenses);
-    sortedExpenses.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    sortedExpenses.sort(byDateDesc);
 
     if (sortedExpenses.isNotEmpty || _expenses.isEmpty) {
       _expenses.clear();
@@ -139,7 +147,8 @@ class ExpenseDataManager {
 
     final existingIndex = _expenses.indexWhere((e) => e.id == expenseId);
     if (existingIndex == -1) {
-      _expenses.insert(0, expenseWithId);
+      _expenses.add(expenseWithId);
+      _expenses.sort(byDateDesc); // a back-dated expense lands in its place
     }
     await CacheService.addExpenseToCache(expenseWithId, userId);
   }
@@ -154,6 +163,7 @@ class ExpenseDataManager {
     final index = _expenses.indexWhere((e) => e.id == expense.id);
     if (index != -1) {
       _expenses[index] = expense;
+      _expenses.sort(byDateDesc); // date may have been edited
       await CacheService.updateExpenseInCache(expense, userId);
     }
   }
@@ -171,6 +181,7 @@ class ExpenseDataManager {
     if (cachedExpenses != null && cachedExpenses.isNotEmpty) {
       _expenses.clear();
       _expenses.addAll(cachedExpenses);
+      _expenses.sort(byDateDesc);
       return true;
     }
     return false;

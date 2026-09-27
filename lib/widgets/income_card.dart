@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/expense_models.dart';
 import '../providers/expense_provider.dart';
+import 'undo_snackbar.dart';
 import '../screens/add_income_screen.dart';
 
 class IncomeCard extends StatelessWidget {
@@ -27,7 +28,7 @@ class IncomeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 6),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
@@ -43,7 +44,7 @@ class IncomeCard extends StatelessWidget {
         },
         onLongPress: onLongPress,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
               if (isSelectionMode) ...[
@@ -54,21 +55,23 @@ class IncomeCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
               ],
-              // Income icon - green themed (same size as expense card)
+              // Income icon — same box/metrics as ExpenseCard, green themed
               Container(
-                width: 50,
-                height: 50,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
                   color: Colors.green.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(
-                  Icons.arrow_downward_rounded,
-                  color: Colors.green,
-                  size: 24,
+                child: const Center(
+                  child: Icon(
+                    Icons.arrow_downward_rounded,
+                    color: Colors.green,
+                    size: 20,
+                  ),
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               // Income details (same structure as expense card)
               Expanded(
                 child: Column(
@@ -77,28 +80,34 @@ class IncomeCard extends StatelessWidget {
                     Text(
                       income.title,
                       style: const TextStyle(
-                        fontSize: 16,
+                        fontSize: 14,
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Text(
                       'Income',
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: 12,
                         color: Colors.green[400],
                         fontWeight: FontWeight.w500,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     if (income.source.isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(
                         'Source: ${income.source}',
                         style: const TextStyle(
-                          fontSize: 12,
+                          fontSize: 11,
                           color: Colors.grey,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ],
@@ -111,25 +120,25 @@ class IncomeCard extends StatelessWidget {
                   Text(
                     '+$currency${income.amount.toStringAsFixed(2)}',
                     style: const TextStyle(
-                      fontSize: 18,
+                      fontSize: 16,
                       fontWeight: FontWeight.bold,
                       color: Colors.green,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   Text(
                     _formatDate(income.date),
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    style: const TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                 ],
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 4),
               // Delete menu - same as expense card
               PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, color: Colors.grey),
+                icon: const Icon(Icons.more_vert, color: Colors.grey, size: 20),
                 onSelected: (value) {
                   if (value == 'delete') {
-                    _showDeleteDialog(context);
+                    _deleteWithUndo(context);
                   }
                 },
                 itemBuilder: (context) => [
@@ -153,58 +162,34 @@ class IncomeCard extends StatelessWidget {
   }
 
   String _formatDate(DateTime date) {
+    // Compare calendar days, not 24h periods: 11pm yesterday is "Yesterday".
     final now = DateTime.now();
-    final difference = now.difference(date).inDays;
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(date.year, date.month, date.day);
+    final difference = today.difference(day).inDays;
 
     if (difference == 0) {
       return 'Today';
     } else if (difference == 1) {
       return 'Yesterday';
-    } else if (difference < 7) {
+    } else if (difference > 1 && difference < 7) {
       return '$difference days ago';
     } else {
       return '${date.day}/${date.month}/${date.year}';
     }
   }
 
-  void _showDeleteDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF2A2A2A),
-          title: const Text(
-            'Delete Income',
-            style: TextStyle(color: Colors.white),
-          ),
-          content: Text(
-            'Are you sure you want to delete "${income.title}"?',
-            style: const TextStyle(color: Colors.white),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                if (income.id != null) {
-                  context.read<ExpenseProvider>().deleteIncome(income.id!);
-                }
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('${income.title} deleted'),
-                    backgroundColor: Colors.red,
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-              },
-              child: const Text('Delete', style: TextStyle(color: Colors.red)),
-            ),
-          ],
-        );
-      },
-    );
+  /// Deletes right away and offers UNDO for 5 seconds.
+  void _deleteWithUndo(BuildContext context) {
+    final provider = context.read<ExpenseProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final deleted = income;
+    if (income.id == null) return;
+    provider.deleteIncome(income.id!);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(undoSnackBar(
+      '"${deleted.title}" deleted',
+      () => provider.restoreIncomes([deleted]),
+    ));
   }
 }

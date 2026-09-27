@@ -6,11 +6,17 @@ class IncomeDataManager {
 
   List<Income> get incomes => _incomes;
 
+  /// Newest income date first; same date -> most recently logged first.
+  static int byDateDesc(Income a, Income b) {
+    final c = b.date.compareTo(a.date);
+    return c != 0 ? c : b.createdAt.compareTo(a.createdAt);
+  }
+
   Future<void> loadIncomes(int userId) async {
     try {
       final incomes = await ExpenseSupabaseService.getIncomes(userId: userId);
       final sortedIncomes = List<Income>.from(incomes);
-      sortedIncomes.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      sortedIncomes.sort(byDateDesc);
 
       if (sortedIncomes.isNotEmpty || _incomes.isEmpty) {
         _incomes.clear();
@@ -26,7 +32,8 @@ class IncomeDataManager {
 
     final existingIndex = _incomes.indexWhere((i) => i.id == incomeId);
     if (existingIndex == -1) {
-      _incomes.insert(0, incomeWithId);
+      _incomes.add(incomeWithId);
+      _incomes.sort(byDateDesc);
     }
   }
 
@@ -35,6 +42,7 @@ class IncomeDataManager {
     final index = _incomes.indexWhere((i) => i.id == income.id);
     if (index != -1) {
       _incomes[index] = income;
+      _incomes.sort(byDateDesc);
     }
   }
 

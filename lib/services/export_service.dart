@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/expense_models.dart';
 import '../providers/expense_provider.dart';
+import 'supabase_service.dart';
 
 /// Service for exporting expense and income data to CSV.
 class ExportService {
@@ -14,9 +15,16 @@ class ExportService {
     final provider = Provider.of<ExpenseProvider>(context, listen: false);
 
     try {
+      // Read from storage, not provider.expenses: the provider only holds the
+      // pages loaded so far, so older expenses would be missing.
+      final expenses =
+          await ExpenseSupabaseService.getExpenses(userId: provider.userId);
+      final incomes =
+          await ExpenseSupabaseService.getIncomes(userId: provider.userId);
+
       final file = await _generateCsv(
-        expenses: provider.expenses,
-        incomes: provider.incomes,
+        expenses: expenses,
+        incomes: incomes,
         currency: provider.currency,
       );
 
@@ -45,6 +53,8 @@ class ExportService {
     final buf = StringBuffer();
 
     // --- Expenses ---
+    // Note: the form's "Payee" field is stored as Expense.description and its
+    // "Purpose" field as Expense.payee — the columns below map accordingly.
     buf.writeln('EXPENSES');
     buf.writeln(
       'Date,Payee,Amount,Category,Purpose,Payment App,Notes',

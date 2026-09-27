@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/expense_provider.dart';
 import '../providers/user_provider.dart';
+import 'cache_service.dart';
 import 'supabase_service.dart';
 
 /// Full JSON backup & restore of all app data.
@@ -112,11 +113,20 @@ class BackupService {
   // -------------------- MANUAL RESTORE --------------------
 
   /// Restores from a JSON backup file at [filePath].
-  /// Clears existing data first, writes backup data, then reloads providers.
+  /// Replaces all `ls_*` data, re-selects the restored user, then reloads
+  /// providers in place (the app has no login screen to bounce through).
   static Future<bool> restoreFromFile(
     BuildContext context,
     String filePath,
   ) async {
+    // Grab these before any await / navigation so we never touch a
+    // deactivated context afterwards.
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final expenseProvider =
+        Provider.of<ExpenseProvider>(context, listen: false);
+
     try {
       final file = File(filePath);
       if (!await file.exists()) {
@@ -138,41 +148,71 @@ class BackupService {
         return false;
       }
 
-      // Clear and restore
+      // Work out which user the backup belongs to BEFORE touching storage.
+      final restoredUserId = _pickUserId(json);
+      if (restoredUserId == null) {
+        _showError(context, 'Backup has no user data to restore.');
+        return false;
+      }
+
+      // Replace app data only (ls_* keys). Keeps unrelated prefs such as
+      // notification settings intact.
       final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
+      for (final key in prefs.getKeys().toList()) {
+        if (key.startsWith(_lsPrefix)) await prefs.remove(key);
+      }
       await _writeMapToPrefs(prefs, json);
 
-      // Re-initialise storage service
+      // Stale expense/settings cache would otherwise show pre-restore data.
+      await CacheService.clearAllCache();
       await ExpenseSupabaseService.initialize();
 
-      // Reload providers
-      if (context.mounted) {
-        final userProvider = Provider.of<UserProvider>(context, listen: false);
-        final expenseProvider = Provider.of<ExpenseProvider>(context, listen: false);
-
-        // Clear in-memory state
-        expenseProvider.clearUserData();
-        await userProvider.clearUser();
-
-        // Trigger re-login flow by going back to auth screen
-        Navigator.of(context).popUntil((route) => route.isFirst);
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Backup restored successfully! Please log in again.'),
-            backgroundColor: Colors.green,
-          ),
-        );
+      // Select the restored user (also writes the `userId` pref, which the
+      // backup doesn't contain) and reload everything in place.
+      expenseProvider.clearUserData();
+      final ok = await userProvider.loginWithUserId(restoredUserId);
+      if (!ok) {
+        messenger.showSnackBar(SnackBar(
+          content: Text('Restore failed: ${userProvider.errorMessage ?? 'user not found'}'),
+          backgroundColor: Colors.red,
+        ));
+        return false;
       }
+      await userProvider.initializeExpenseProvider(expenseProvider);
 
+      // Keep the shadow auto-backup in sync with what was just restored.
+      await autoSave();
+
+      navigator.popUntil((route) => route.isFirst);
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Backup restored successfully!'),
+          backgroundColor: Colors.green,
+        ),
+      );
       return true;
     } catch (e) {
-      if (context.mounted) {
-        _showError(context, 'Restore failed: $e');
-      }
+      messenger.showSnackBar(
+        SnackBar(content: Text('Restore failed: $e'), backgroundColor: Colors.red),
+      );
       return false;
     }
+  }
+
+  /// Picks the user id to activate from a backup map: the first user in
+  /// `ls_users` that has a settings entry, else the first user at all.
+  static int? _pickUserId(Map<String, dynamic> data) {
+    final rawUsers = data['ls_users'];
+    if (rawUsers is! String) return null;
+    final users = (jsonDecode(rawUsers) as List)
+        .map((u) => (u as Map)['id'])
+        .whereType<int>()
+        .toList();
+    if (users.isEmpty) return null;
+    return users.firstWhere(
+      (id) => data.containsKey('ls_settings_$id'),
+      orElse: () => users.first,
+    );
   }
 
   // -------------------- helpers --------------------

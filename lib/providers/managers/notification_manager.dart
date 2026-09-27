@@ -5,7 +5,7 @@ class NotificationManager {
   Future<void> triggerExpenseNotifications({
     required Expense expense,
     required List<Expense> allExpenses,
-    required double monthlyBudget,
+    required double monthlyIncome,
     required double categoryBudget,
     required double categorySpent,
     required bool isFirstExpense,
@@ -16,9 +16,9 @@ class NotificationManager {
         0.0,
         (sum, e) => sum + e.amount,
       );
-      await NotificationService.checkMonthlyBudgetExceeded(
+      await NotificationService.checkIncomeExceeded(
         monthlySpent,
-        monthlyBudget,
+        monthlyIncome,
       );
 
       if (categoryBudget > 0) {

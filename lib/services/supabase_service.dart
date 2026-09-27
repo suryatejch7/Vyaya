@@ -204,6 +204,40 @@ class ExpenseSupabaseService {
     BackupService.autoSave();
   }
 
+  /// Counts expenses per category name across ALL stored expenses.
+  static Future<Map<String, int>> getExpenseCountsByCategory(
+      {required int userId}) async {
+    final counts = <String, int>{};
+    for (final e in _loadExpensesRaw(userId)) {
+      final cat = (e['category'] ?? 'Other').toString();
+      counts[cat] = (counts[cat] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /// Renames the category on every stored expense per [mapping] (old -> new).
+  /// Single pass, single write. Returns how many expenses changed.
+  static Future<int> reassignExpenseCategories(Map<String, String> mapping,
+      {required int userId}) async {
+    if (mapping.isEmpty) return 0;
+    final expenses = _loadExpensesRaw(userId);
+    final now = DateTime.now().toIso8601String();
+    var changed = 0;
+    for (final e in expenses) {
+      final target = mapping[(e['category'] ?? 'Other').toString()];
+      if (target != null) {
+        e['category'] = target;
+        e['updated_at'] = now;
+        changed++;
+      }
+    }
+    if (changed > 0) {
+      await _p.setString('$_expensesPrefix$userId', jsonEncode(expenses));
+      BackupService.autoSave();
+    }
+    return changed;
+  }
+
   static Future<void> deleteExpense(String expenseId, int userId) async {
     final expenses = _loadExpensesRaw(userId);
     expenses.removeWhere((e) => e['id'].toString() == expenseId);
@@ -315,6 +349,35 @@ class ExpenseSupabaseService {
     return result;
   }
 
+  // ==================== EXTRA LISTS & META ====================
+  // Stored under ls_<name>_<userId> so backups/restores include them.
+  // Used for: recurring entries, lent/borrowed, month-end savings marker.
+
+  static Future<List<Map<String, dynamic>>> getJsonList(String name,
+      {required int userId}) async {
+    final json = _p.getString('ls_${name}_$userId');
+    if (json == null) return [];
+    return List<Map<String, dynamic>>.from(
+      (jsonDecode(json) as List).map((e) => Map<String, dynamic>.from(e)),
+    );
+  }
+
+  static Future<void> saveJsonList(
+      String name, List<Map<String, dynamic>> items,
+      {required int userId}) async {
+    await _p.setString('ls_${name}_$userId', jsonEncode(items));
+    BackupService.autoSave();
+  }
+
+  static String? getMeta(String name, {required int userId}) =>
+      _p.getString('ls_${name}_$userId');
+
+  static Future<void> setMeta(String name, String value,
+      {required int userId}) async {
+    await _p.setString('ls_${name}_$userId', value);
+    BackupService.autoSave();
+  }
+
   // ==================== DATA MANAGEMENT ====================
 
   /// Clears ALL app data from local storage.
@@ -329,6 +392,9 @@ class ExpenseSupabaseService {
     await _p.remove('$_expensesPrefix$userId');
     await _p.remove('$_incomesPrefix$userId');
     await _p.remove('$_settingsPrefix$userId');
+    await _p.remove('ls_recurring_$userId');
+    await _p.remove('ls_debts_$userId');
+    await _p.remove('ls_savings_through_$userId');
   }
 
   // ==================== PRIVATE HELPERS ====================

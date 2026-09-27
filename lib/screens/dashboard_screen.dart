@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/expense_models.dart';
+import '../widgets/undo_snackbar.dart';
 import '../providers/expense_provider.dart';
 import '../widgets/expense_card.dart';
 import '../widgets/income_card.dart';
@@ -95,7 +97,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         backgroundColor: const Color(0xFF2A2A2A),
         title: const Text('Delete Selected', style: TextStyle(color: Colors.white)),
         content: Text(
-          'Delete $total selected item${total > 1 ? 's' : ''}? This cannot be undone.',
+          'Delete $total selected item${total > 1 ? 's' : ''}?',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -104,16 +106,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
               final provider = context.read<ExpenseProvider>();
-              for (final id in _selectedExpenseIds) {
-                provider.deleteExpense(id);
-              }
-              for (final id in _selectedIncomeIds) {
-                provider.deleteIncome(id);
-              }
+              final messenger = ScaffoldMessenger.of(context);
+              // Keep copies so UNDO can re-add them.
+              final deletedExpenses = provider.expenses
+                  .where((e) => _selectedExpenseIds.contains(e.id))
+                  .toList();
+              final deletedIncomes = provider.incomes
+                  .where((i) => _selectedIncomeIds.contains(i.id))
+                  .toList();
+              final expenseIds = _selectedExpenseIds.toList();
+              final incomeIds = _selectedIncomeIds.toList();
               _clearSelection();
+              for (final id in expenseIds) {
+                await provider.deleteExpense(id);
+              }
+              for (final id in incomeIds) {
+                await provider.deleteIncome(id);
+              }
+              messenger.hideCurrentSnackBar();
+              messenger.showSnackBar(undoSnackBar(
+                'Deleted $total item${total > 1 ? 's' : ''}',
+                () async {
+                  await provider.restoreExpenses(deletedExpenses);
+                  await provider.restoreIncomes(deletedIncomes);
+                },
+              ));
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Delete', style: TextStyle(color: Colors.white)),
@@ -205,12 +225,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SliverToBoxAdapter(
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
-                child: IncomeSummaryWidget(),
-              ),
-            ),
-            const SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
                 child: CategorySummary(),
               ),
             ),
@@ -237,19 +251,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           width: 24,
                           height: 24,
                           child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                    ),
-                  );
-                }
-                if (!provider.hasMoreExpenses && provider.expenses.isNotEmpty) {
-                  return const SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Center(
-                        child: Text(
-                          'No more expenses',
-                          style: TextStyle(color: Colors.grey, fontSize: 14),
                         ),
                       ),
                     ),
@@ -503,17 +504,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildAllTransactionsList(ExpenseProvider provider) {
-    final expenses = provider.expenses;
-    final incomes = provider.incomes;
+    final expenses = provider.viewMonthExpenses;
+    final incomes = provider.viewMonthIncomes;
 
     // Combine and sort by date (most recent first)
     final List<dynamic> allTransactions = [
       ...expenses.map((e) => {'type': 'expense', 'data': e, 'date': e.date}),
       ...incomes.map((i) => {'type': 'income', 'data': i, 'date': i.date}),
     ];
-    allTransactions.sort(
-      (a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime),
-    );
+    DateTime loggedAt(Map t) => t['data'] is Expense
+        ? (t['data'] as Expense).createdAt
+        : (t['data'] as Income).createdAt;
+    allTransactions.sort((a, b) {
+      final c = (b['date'] as DateTime).compareTo(a['date'] as DateTime);
+      return c != 0 ? c : loggedAt(b).compareTo(loggedAt(a));
+    });
 
     if (allTransactions.isEmpty) {
       return SliverFillRemaining(
@@ -626,7 +631,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     // Filter expenses that are linked to credit card accounts
-    final ccExpenses = provider.expenses
+    final ccExpenses = provider.viewMonthExpenses
         .where((e) =>
             e.accountId != null && creditCardAccountIds.contains(e.accountId))
         .toList();
@@ -665,12 +670,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final currency = provider.currency;
     final categories = provider.categories;
 
-    // Credit card total this month
-    final now = DateTime.now();
-    final monthStart = DateTime(now.year, now.month, 1);
-    final monthTotal = ccExpenses
-        .where((e) => !e.date.isBefore(monthStart))
-        .fold(0.0, (sum, e) => sum + e.amount);
+    // Credit card total for the picked month (list is already filtered)
+    final monthTotal = ccExpenses.fold(0.0, (sum, e) => sum + e.amount);
 
     return SliverList(
       delegate: SliverChildBuilderDelegate(
@@ -711,9 +712,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'This Month\'s CC Spending',
-                          style: TextStyle(
+                        Text(
+                          provider.isViewingCurrentMonth
+                              ? 'This Month\'s CC Spending'
+                              : 'CC Spending · ${DateFormat('MMM yyyy').format(provider.viewMonth)}',
+                          style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 13,
                           ),
@@ -731,7 +734,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const Spacer(),
                     Text(
-                      '${ccExpenses.where((e) => !e.date.isBefore(monthStart)).length} txns',
+                      '${ccExpenses.length} txns',
                       style: const TextStyle(
                         color: Colors.white54,
                         fontSize: 13,
@@ -845,20 +848,35 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
   Widget build(BuildContext context) {
     return Consumer<ExpenseProvider>(
       builder: (context, expenseProvider, child) {
-        final isOverBudget = expenseProvider.isOverBudget;
-        final budgetExcess = expenseProvider.budgetExcess;
-        final monthlyBudget = expenseProvider.monthlyBudget;
-        final totalExpense = expenseProvider.currentMonthTotalExpense;
+        final isOverBudget = expenseProvider.viewMonthOverspent; // spent > income
+        final budgetExcess = expenseProvider.viewMonthOverspentBy;
+        final totalIncome = expenseProvider.viewMonthIncome;
+        final left = expenseProvider.viewMonthLeft;
+        final totalExpense = expenseProvider.viewMonthTotalExpense;
+        final isCurrent = expenseProvider.isViewingCurrentMonth;
         final currency = expenseProvider.currency;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Month picker: ◀ label ▶ (▶ stops at the current month)
             Row(
               children: [
-                const Text(
-                  'This Month\'s Spending',
-                  style: TextStyle(fontSize: 16, color: Colors.grey),
+                _MonthArrow(
+                  icon: Icons.chevron_left_rounded,
+                  onTap: expenseProvider.previousViewMonth,
+                ),
+                const SizedBox(width: 2),
+                Text(
+                  isCurrent
+                      ? 'This Month\'s Spending'
+                      : 'Spent in ${DateFormat('MMMM yyyy').format(expenseProvider.viewMonth)}',
+                  style: const TextStyle(fontSize: 16, color: Colors.grey),
+                ),
+                const SizedBox(width: 2),
+                _MonthArrow(
+                  icon: Icons.chevron_right_rounded,
+                  onTap: isCurrent ? null : expenseProvider.nextViewMonth,
                 ),
               ],
             ),
@@ -907,25 +925,25 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
                 ],
               ],
             ),
-            if (monthlyBudget > 0) ...[
+            ...[
               const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Budget: $currency${monthlyBudget.toStringAsFixed(0)}',
+                    'Income: $currency${totalIncome.toStringAsFixed(0)}',
                     style: const TextStyle(fontSize: 14, color: Colors.grey),
                   ),
-                  if (!isOverBudget) ...[
-                    Text(
-                      '$currency${(monthlyBudget - totalExpense).toStringAsFixed(0)} left',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.green,
-                        fontWeight: FontWeight.w500,
-                      ),
+                  Text(
+                    isOverBudget
+                        ? '$currency${budgetExcess.toStringAsFixed(0)} over'
+                        : '$currency${left.toStringAsFixed(0)} left',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: isOverBudget ? Colors.red : Colors.green,
+                      fontWeight: FontWeight.w500,
                     ),
-                  ],
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -933,9 +951,11 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
                 child: AnimatedBuilder(
                   animation: _progressAnimation,
                   builder: (context, child) {
+                    final ratio = totalIncome > 0
+                        ? totalExpense / totalIncome
+                        : (totalExpense > 0 ? 1.0 : 0.0);
                     final progressValue =
-                        (totalExpense / monthlyBudget).clamp(0.0, 1.0) *
-                        _progressAnimation.value;
+                        ratio.clamp(0.0, 1.0) * _progressAnimation.value;
                     return LinearProgressIndicator(
                       value: progressValue,
                       backgroundColor: Colors.grey.withValues(alpha: 0.3),
@@ -956,106 +976,25 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
   }
 }
 
-/// Widget to show income and net balance summary
-class IncomeSummaryWidget extends StatelessWidget {
-  const IncomeSummaryWidget({super.key});
+/// Compact chevron used by the home screen month picker.
+class _MonthArrow extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+  const _MonthArrow({required this.icon, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ExpenseProvider>(
-      builder: (context, expenseProvider, child) {
-        final currency = expenseProvider.currency;
-        final totalIncome = expenseProvider.totalIncomeThisMonth;
-        final totalExpense = expenseProvider.currentMonthTotalExpense;
-        return Container(
-          margin: const EdgeInsets.only(top: 16),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1A1A1A),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Colors.green.withValues(alpha: 0.3),
-              width: 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              // Income section
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.arrow_downward_rounded,
-                          color: Colors.green,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Income',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[400],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '+$currency${totalIncome.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Divider
-              Container(
-                height: 40,
-                width: 1,
-                color: Colors.grey.withValues(alpha: 0.3),
-              ),
-              // Total Spent section
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Icon(
-                          Icons.arrow_upward_rounded,
-                          color: Colors.red,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Spent',
-                          style: TextStyle(fontSize: 12, color: Colors.grey[400]),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '-$currency${totalExpense.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.red,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.all(2),
+        child: Icon(
+          icon,
+          size: 22,
+          color: onTap == null ? Colors.grey[800] : Colors.grey[400],
+        ),
+      ),
     );
   }
 }
