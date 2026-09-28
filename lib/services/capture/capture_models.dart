@@ -29,6 +29,10 @@ class DetectedTransaction {
   /// Expense/income id once added, or the manual entry it duplicates.
   final String? entryId;
 
+  /// Who sent it: the SMS header code ("HDFCBK") or the app's package name.
+  /// Used by "Always ignore" rules. Null for items captured before it existed.
+  final String? sender;
+
   const DetectedTransaction({
     required this.id,
     required this.captureIds,
@@ -48,6 +52,7 @@ class DetectedTransaction {
     required this.fromImport,
     required this.status,
     this.entryId,
+    this.sender,
   });
 
   String get title =>
@@ -77,6 +82,7 @@ class DetectedTransaction {
         fromImport: j['from_import'] as bool? ?? false,
         status: j['status'] ?? 'pending',
         entryId: j['entry_id'],
+        sender: j['sender'],
       );
 
   Map<String, dynamic> toJson() => {
@@ -98,6 +104,7 @@ class DetectedTransaction {
         'from_import': fromImport,
         'status': status,
         'entry_id': entryId,
+        'sender': sender,
       };
 
   DetectedTransaction copyWith({
@@ -130,5 +137,37 @@ class DetectedTransaction {
         fromImport: fromImport,
         status: status ?? this.status,
         entryId: entryId ?? this.entryId,
+        sender: sender,
       );
+}
+
+/// "Always ignore" rule for auto-detection: a payee name or a sender.
+class MuteRule {
+  /// 'payee' | 'sender'
+  final String type;
+
+  /// Normalised payee name, or the sender code / app package.
+  final String value;
+
+  /// What to show the user: "Swiggy", "HDFC Bank (HDFCBK)", "Paytm".
+  final String label;
+
+  const MuteRule({required this.type, required this.value, required this.label});
+
+  bool get isPayee => type == 'payee';
+
+  factory MuteRule.fromJson(Map<String, dynamic> j) => MuteRule(
+        type: j['type'] ?? 'payee',
+        value: j['value'] ?? '',
+        label: j['label'] ?? j['value'] ?? '',
+      );
+
+  Map<String, dynamic> toJson() => {'type': type, 'value': value, 'label': label};
+
+  @override
+  bool operator ==(Object other) =>
+      other is MuteRule && other.type == type && other.value == value;
+
+  @override
+  int get hashCode => Object.hash(type, value);
 }

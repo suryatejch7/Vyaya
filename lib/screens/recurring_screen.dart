@@ -147,7 +147,7 @@ class _RecurringTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${entry.isIncome ? '+' : ''}$currency${entry.amount.toStringAsFixed(0)} · ${entry.isIncome ? 'Income' : entry.category} · ${_ordinal(entry.dayOfMonth)} monthly',
+                      '${entry.isIncome ? '+' : ''}$currency${entry.amount.toStringAsFixed(0)} · ${entry.isIncome ? 'Income' : entry.category} · ${entry.scheduleLabel}',
                       style: TextStyle(
                         fontSize: 12,
                         color: entry.isIncome ? Colors.green[400] : color,
@@ -221,7 +221,10 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
 
   RecurringType _type = RecurringType.expense;
   String _category = 'Other';
+  RecurringFrequency _freq = RecurringFrequency.monthly;
   int _day = DateTime.now().day;
+  int _weekday = DateTime.now().weekday;
+  int _month = DateTime.now().month;
   String _accountId = _noAccount;
   bool _addThisMonth = false;
 
@@ -240,7 +243,10 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
       _sourceController.text = e.source;
       _notesController.text = e.notes ?? '';
       _category = e.category;
+      _freq = e.frequency;
       _day = e.dayOfMonth;
+      _weekday = e.weekday;
+      _month = e.month;
       _accountId = e.accountId ?? _noAccount;
     } else {
       if (provider.categories.isNotEmpty) {
@@ -272,8 +278,21 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
     return DateTime(n.year, n.month, n.day);
   }
 
-  DateTime get _thisMonthOccurrence =>
-      RecurringEntry.occurrenceIn(_today.year, _today.month, _day);
+  /// The schedule as currently set in the form (for date maths only).
+  RecurringEntry get _schedule => RecurringEntry(
+        id: '',
+        type: _type,
+        title: '',
+        amount: 0,
+        frequency: _freq,
+        dayOfMonth: _day,
+        weekday: _weekday,
+        month: _month,
+        nextDue: _today,
+      );
+
+  /// This week's / month's / year's occurrence.
+  DateTime get _thisPeriodOccurrence => _schedule.occurrenceInPeriodOf(_today);
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
@@ -287,11 +306,15 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
 
     if (_isEditing) {
       final old = widget.entry!;
-      // Day changed: move the pending occurrence within the same month.
-      final nextDue = _day == old.dayOfMonth
-          ? old.nextDue
-          : RecurringEntry.occurrenceIn(
-              old.nextDue.year, old.nextDue.month, _day);
+      final sameSchedule = _freq == old.frequency &&
+          _day == old.dayOfMonth &&
+          _weekday == old.weekday &&
+          _month == old.month;
+      // Schedule changed: move the pending occurrence to the new day within
+      // the same week / month / year it was due in (that period hasn't been
+      // logged yet).
+      final nextDue =
+          sameSchedule ? old.nextDue : _schedule.occurrenceInPeriodOf(old.nextDue);
       await provider.updateRecurring(RecurringEntry(
         id: old.id,
         type: _type,
@@ -299,17 +322,20 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
         amount: amount,
         category: _category,
         source: _sourceController.text.trim(),
+        frequency: _freq,
         dayOfMonth: _day,
+        weekday: _weekday,
+        month: _month,
         accountId: accountId,
         notes: notes,
         active: old.active,
         nextDue: nextDue,
       ));
     } else {
-      final occ = _thisMonthOccurrence;
+      final occ = _thisPeriodOccurrence;
       final nextDue = (occ.isAfter(_today) || _addThisMonth)
           ? occ
-          : RecurringEntry.occurrenceIn(_today.year, _today.month + 1, _day);
+          : _schedule.nextAfter(occ);
       await provider.addRecurring(RecurringEntry(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
         type: _type,
@@ -317,7 +343,10 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
         amount: amount,
         category: _category,
         source: _sourceController.text.trim(),
+        frequency: _freq,
         dayOfMonth: _day,
+        weekday: _weekday,
+        month: _month,
         accountId: accountId,
         notes: notes,
         nextDue: nextDue,
@@ -331,7 +360,7 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
     final provider = context.watch<ExpenseProvider>();
     final isIncome = _type == RecurringType.income;
     final showThisMonthSwitch =
-        !_isEditing && !_thisMonthOccurrence.isAfter(_today);
+        !_isEditing && !_thisPeriodOccurrence.isAfter(_today);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -431,21 +460,99 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
                 onChanged: (v) => setState(() => _category = v ?? _category),
               ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<int>(
-              initialValue: _day,
-              isExpanded: true,
-              dropdownColor: const Color(0xFF1E1E1E),
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'Day of month',
-                helperText: 'Shorter months use their last day',
-              ),
-              items: [
-                for (var d = 1; d <= 31; d++)
-                  DropdownMenuItem(value: d, child: Text(_ordinal(d))),
+            const Text('Repeats',
+                style: TextStyle(color: Colors.grey, fontSize: 12)),
+            const SizedBox(height: 6),
+            SegmentedButton<RecurringFrequency>(
+              segments: const [
+                ButtonSegment(
+                    value: RecurringFrequency.weekly, label: Text('Weekly')),
+                ButtonSegment(
+                    value: RecurringFrequency.monthly, label: Text('Monthly')),
+                ButtonSegment(
+                    value: RecurringFrequency.yearly, label: Text('Yearly')),
               ],
-              onChanged: (v) => setState(() => _day = v ?? _day),
+              selected: {_freq},
+              showSelectedIcon: false,
+              onSelectionChanged: (s) => setState(() {
+                _freq = s.first;
+                _addThisMonth = false;
+              }),
             ),
+            const SizedBox(height: 12),
+            if (_freq == RecurringFrequency.weekly)
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (var d = 1; d <= 7; d++)
+                    ChoiceChip(
+                      label: Text(RecurringEntry.weekdayNames[d - 1]
+                          .substring(0, 3)),
+                      selected: _weekday == d,
+                      showCheckmark: false,
+                      onSelected: (_) => setState(() {
+                        _weekday = d;
+                        _addThisMonth = false;
+                      }),
+                      labelStyle: TextStyle(
+                          color: _weekday == d ? Colors.black : Colors.white70),
+                      selectedColor: Theme.of(context).colorScheme.primary,
+                      backgroundColor: const Color(0xFF1A1A1A),
+                      side: BorderSide.none,
+                      shape: const StadiumBorder(),
+                    ),
+                ],
+              )
+            else
+              Row(
+                children: [
+                  if (_freq == RecurringFrequency.yearly) ...[
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        initialValue: _month,
+                        isExpanded: true,
+                        dropdownColor: const Color(0xFF1E1E1E),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(labelText: 'Month'),
+                        items: [
+                          for (var m = 1; m <= 12; m++)
+                            DropdownMenuItem(
+                                value: m,
+                                child: Text(RecurringEntry.monthNames[m - 1])),
+                        ],
+                        onChanged: (v) => setState(() {
+                          _month = v ?? _month;
+                          _addThisMonth = false;
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                  Expanded(
+                    child: DropdownButtonFormField<int>(
+                      initialValue: _day,
+                      isExpanded: true,
+                      dropdownColor: const Color(0xFF1E1E1E),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: _freq == RecurringFrequency.yearly
+                            ? 'Day'
+                            : 'Day of month',
+                        helperText: 'Shorter months use their last day',
+                      ),
+                      items: [
+                        for (var d = 1; d <= 31; d++)
+                          DropdownMenuItem(value: d, child: Text(_ordinal(d))),
+                      ],
+                      onChanged: (v) => setState(() {
+                        _day = v ?? _day;
+                        _addThisMonth = false;
+                      }),
+                    ),
+                  ),
+                ],
+              ),
             if (provider.accounts.isNotEmpty) ...[
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
@@ -476,12 +583,12 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
               const SizedBox(height: 8),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text(
-                  'Also add this month\'s entry now',
-                  style: TextStyle(color: Colors.white),
+                title: Text(
+                  'Also add ${_schedule.periodLabel}\'s entry now',
+                  style: const TextStyle(color: Colors.white),
                 ),
                 subtitle: Text(
-                  'The ${_ordinal(_day)} has already come this month. Leave off if you already logged it.',
+                  '${DateFormat('EEE d MMM').format(_thisPeriodOccurrence)} has already come ${_schedule.periodLabel}. Leave off if you already logged it.',
                   style: const TextStyle(color: Colors.grey),
                 ),
                 value: _addThisMonth,

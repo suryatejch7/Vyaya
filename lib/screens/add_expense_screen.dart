@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/expense_provider.dart';
+import '../providers/capture_provider.dart';
 import '../models/expense_models.dart';
 // import '../models/transaction_ocr_models.dart'; // screenshot scanning off
 
@@ -536,8 +537,13 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         category: _selectedCategory,
         date: _selectedDate,
         payee: payee,
-        paymentApp: widget.prefilledPaymentApp ?? 'PhonePe',
-        transactionId: widget.prefilledTransactionId,
+        // Editing keeps the original tags: the transaction id links an
+        // entry to its detected payment or month-end savings.
+        paymentApp: widget.expense?.paymentApp ??
+            widget.prefilledPaymentApp ??
+            'Manual',
+        transactionId:
+            widget.expense?.transactionId ?? widget.prefilledTransactionId,
         notes: _noteController.text.trim().isEmpty
             ? null
             : _noteController.text.trim(),
@@ -547,9 +553,18 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       );
 
       final provider = context.read<ExpenseProvider>();
+      final capture = context.read<CaptureProvider>();
 
       if (widget.expense != null) {
         await provider.updateExpense(expense);
+        // Recategorised: teach auto-detect this payee's category.
+        if (widget.expense!.category != expense.category) {
+          await capture.learnFromEdit(
+            expense.transactionId,
+            expense.category,
+            payee: expense.payee,
+          );
+        }
       } else {
         await provider.addExpense(expense);
       }

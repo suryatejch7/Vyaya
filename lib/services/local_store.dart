@@ -401,6 +401,8 @@ class LocalStore {
     await _p.remove('ls_debts_$userId');
     await _p.remove('ls_savings_through_$userId');
     await _p.remove('ls_savings_from_$userId');
+    await _p.remove('ls_savings_enabled_$userId');
+    await _p.remove('ls_savings_skip_$userId');
   }
 
   // ==================== PRIVATE HELPERS ====================

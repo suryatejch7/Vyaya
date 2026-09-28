@@ -21,6 +21,7 @@ class CaptureProvider extends ChangeNotifier {
   static const _itemsKey = 'detected';
   static const _rulesKey = 'merchant_rules';
   static const _modeKey = 'capture_mode';
+  static const _mutesKey = 'capture_mutes';
   static const _maxItems = 600;
 
   ExpenseProvider? _expenses;
@@ -30,6 +31,7 @@ class CaptureProvider extends ChangeNotifier {
 
   final List<DetectedTransaction> _items = [];
   final Map<String, String> _rules = {};
+  final List<MuteRule> _mutes = [];
   String _mode = 'ask';
   bool _notificationAccess = false;
   bool _smsPermission = false;
@@ -40,6 +42,7 @@ class CaptureProvider extends ChangeNotifier {
   bool get notificationAccess => _notificationAccess;
   bool get smsPermission => _smsPermission;
   bool get isEnabled => _notificationAccess || _smsPermission;
+  List<MuteRule> get muteRules => List.unmodifiable(_mutes);
 
   List<DetectedTransaction> _byStatus(String s) =>
       _items.where((i) => i.status == s).toList()
@@ -97,6 +100,14 @@ class CaptureProvider extends ChangeNotifier {
       } catch (_) {}
     }
     _mode = LocalStore.getMeta(_modeKey, userId: _userId) ?? 'ask';
+    _mutes.clear();
+    final mutes = LocalStore.getMeta(_mutesKey, userId: _userId);
+    if (mutes != null) {
+      try {
+        _mutes.addAll((jsonDecode(mutes) as List)
+            .map((e) => MuteRule.fromJson(Map<String, dynamic>.from(e))));
+      } catch (_) {}
+    }
     notifyListeners();
   }
 
@@ -118,6 +129,10 @@ class CaptureProvider extends ChangeNotifier {
         _itemsKey, _items.map((i) => i.toJson()).toList(),
         userId: _userId);
   }
+
+  Future<void> _saveMutes() => LocalStore.setMeta(
+      _mutesKey, jsonEncode(_mutes.map((m) => m.toJson()).toList()),
+      userId: _userId);
 
   Future<void> _saveRules() => LocalStore.setMeta(
       _rulesKey, jsonEncode(_rules),
@@ -149,11 +164,16 @@ class CaptureProvider extends ChangeNotifier {
 
   /// Imports bank SMS from the last [days] days into the review list.
   /// Imported items are never auto-added. Returns how many new items appeared.
-  Future<int> importRecentSms({int days = 30}) async {
+  Future<int> importRecentSms({int days = 30}) =>
+      importSmsSince(DateTime.now().subtract(Duration(days: days)));
+
+  /// Imports bank SMS received on or after [since].
+  Future<int> importSmsSince(DateTime since) async {
     if (!_smsPermission && !await requestSmsPermission()) return 0;
     final before = _items.length;
-    await VyayaCapture.backfillSms(
-        DateTime.now().subtract(Duration(days: days)));
+    // Bounded by date; the limit is only a safety cap on how many
+    // payment-like messages get queued in one go.
+    await VyayaCapture.backfillSms(since, limit: 5000);
     await sync();
     return _items.length - before;
   }
@@ -171,7 +191,8 @@ class CaptureProvider extends ChangeNotifier {
     try {
       do {
         _resyncRequested = false;
-        for (var round = 0; round < 20; round++) {
+        // Up to 10,000 per pass (a 30-day import can queue a few thousand).
+        for (var round = 0; round < 50; round++) {
           final batch = await VyayaCapture.fetchPending(limit: 200);
           if (batch.isEmpty) break;
           for (final record in batch) {
@@ -200,6 +221,10 @@ class CaptureProvider extends ChangeNotifier {
     final t = result.transaction;
     if (t == null) return;
 
+    // 0) An "Always ignore" rule covers this payee or sender.
+    final senderKey = _senderKey(kind, r.sender);
+    if (_isMuted(merchant: t.merchant, sender: senderKey)) return;
+
     // 1) The same payment reported by another source (or re-read)?
     final same = _findSamePayment(t, kind, r.postedAt);
     if (same != null) {
@@ -215,6 +240,7 @@ class CaptureProvider extends ChangeNotifier {
       rawText: r.body,
       categoryNames: _expenses!.categories.map((c) => c.name).toList(),
       learned: _rules,
+      aliases: _categoryAliases(),
     );
 
     final item = DetectedTransaction(
@@ -236,6 +262,7 @@ class CaptureProvider extends ChangeNotifier {
       fromImport: r.backfill,
       status: manualId != null ? 'duplicate' : 'pending',
       entryId: manualId,
+      sender: senderKey,
     );
     _items.add(item);
 
@@ -373,6 +400,7 @@ class CaptureProvider extends ChangeNotifier {
           rawText: r.body,
           categoryNames: _expenses!.categories.map((c) => c.name).toList(),
           learned: _rules,
+          aliases: _categoryAliases(),
         ),
       );
     }
@@ -474,19 +502,185 @@ class CaptureProvider extends ChangeNotifier {
   /// Adds every pending payment except likely transfers and card bill
   /// payments, which stay in review (adding them would double count).
   /// Returns how many were added and how many were left.
-  Future<({int added, int skipped})> acceptAll() async {
-    var added = 0, skipped = 0;
+  /// [only] limits it to those ids. [skipFlagged] false adds transfers and
+  /// card bills too (the user picked them explicitly).
+  Future<({int added, int skipped, List<String> ids})> acceptAll(
+      {Iterable<String>? only, bool skipFlagged = true}) async {
+    final wanted = only?.toSet();
+    final addedIds = <String>[];
+    var skipped = 0;
     for (final item in pending) {
-      if (item.flags.any(_notSpendingFlags.contains)) {
+      if (wanted != null && !wanted.contains(item.id)) continue;
+      if (skipFlagged && item.flags.any(_notSpendingFlags.contains)) {
         skipped++;
         continue;
       }
       await _addToLedger(item);
-      added++;
+      addedIds.add(item.id);
     }
     await _save();
     notifyListeners();
-    return (added: added, skipped: skipped);
+    return (added: addedIds.length, skipped: skipped, ids: addedIds);
+  }
+
+  /// Undo for adding: removes the expense/income it created and puts the
+  /// payment back in review.
+  Future<void> unaccept(String id) => unacceptMany([id]);
+
+  Future<void> unacceptMany(List<String> ids) async {
+    final ep = _expenses;
+    if (ep == null) return;
+    for (final id in ids) {
+      final item = byId(id);
+      if (item == null || item.status != 'added') continue;
+      final entry = item.entryId;
+      if (entry != null) {
+        try {
+          if (item.isDebit) {
+            await ep.deleteExpense(entry);
+          } else {
+            await ep.deleteIncome(entry);
+          }
+        } catch (e) {
+          debugPrint('Undo add failed for $id: $e');
+        }
+      }
+      _replace(item.copyWith(status: 'pending'));
+    }
+    await _save();
+    notifyListeners();
+  }
+
+  /// Removes detected payments from the list for good. Expenses and income
+  /// they already created stay. [ids] limits it to those; otherwise it's
+  /// everything waiting for review, or the whole list with [everything].
+  /// Their messages are forgotten natively too, so importing that period
+  /// again brings them back. Returns what was removed (for undo).
+  Future<List<DetectedTransaction>> removeItems(
+      {Iterable<String>? ids, bool everything = false}) async {
+    final wanted = ids?.toSet();
+    final removed = _items
+        .where((i) =>
+            wanted != null ? wanted.contains(i.id) : (everything || i.isPending))
+        .toList();
+    if (removed.isEmpty) return removed;
+    final gone = removed.map((i) => i.id).toSet();
+    _items.removeWhere((i) => gone.contains(i.id));
+    await _save();
+    notifyListeners();
+    try {
+      await VyayaCapture.forget(
+          [for (final i in removed) ...i.captureIds]);
+    } catch (e) {
+      debugPrint('Forgetting captures failed: $e');
+    }
+    return removed;
+  }
+
+  /// Undo for [removeItems].
+  Future<void> putBack(List<DetectedTransaction> items) async {
+    for (final i in items) {
+      if (byId(i.id) == null) _items.add(i);
+    }
+    await _save();
+    notifyListeners();
+  }
+
+  /// Keeps detected payments and learned payee rules pointing at a category
+  /// after it's renamed.
+  Future<void> renameCategory(String from, String to) async {
+    var changed = false;
+    for (final i in List.of(_items)) {
+      if (i.category == from) {
+        _replace(i.copyWith(category: to));
+        changed = true;
+      }
+    }
+    var rulesChanged = false;
+    for (final k in _rules.keys.toList()) {
+      if (_rules[k] == from) {
+        _rules[k] = to;
+        rulesChanged = true;
+      }
+    }
+    if (changed) await _save();
+    if (rulesChanged) await _saveRules();
+    if (changed || rulesChanged) notifyListeners();
+  }
+
+  /// Default categories renamed by the user: default name -> current name,
+  /// so keyword suggestions ("swiggy" -> Food) follow the rename.
+  Map<String, String> _categoryAliases() => {
+        for (final c in _expenses?.categories ?? const <ExpenseCategory>[])
+          c.id: c.name,
+      };
+
+  // ------------------------------------------------------------ ignore rules
+
+  static String _norm(String s) => s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+  /// SMS header code ("VM-HDFCBK-S" -> "HDFCBK") or the app package.
+  static String? _senderKey(String kind, String? sender) {
+    if (sender == null || sender.trim().isEmpty) return null;
+    if (kind == 'notification') return sender;
+    final parts = sender.toUpperCase().split('-');
+    final header = parts.length >= 2 ? parts[1] : parts.first;
+    final clean = header.replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    return clean.isEmpty ? null : clean;
+  }
+
+  bool _isMuted({String? merchant, String? sender}) {
+    if (_mutes.isEmpty) return false;
+    final payee = merchant == null ? '' : _norm(merchant);
+    for (final m in _mutes) {
+      if (m.isPayee && payee.isNotEmpty && payee == m.value) return true;
+      if (!m.isPayee && sender != null && sender == m.value) return true;
+    }
+    return false;
+  }
+
+  bool _matchesMute(MuteRule m, DetectedTransaction i) => m.isPayee
+      ? i.merchant != null && _norm(i.merchant!) == m.value
+      : i.sender != null && i.sender == m.value;
+
+  /// Rule for "always ignore this payee", or null when it has no payee name.
+  MuteRule? payeeRuleFor(DetectedTransaction i) {
+    final name = i.merchant;
+    if (name == null || _norm(name).isEmpty) return null;
+    return MuteRule(type: 'payee', value: _norm(name), label: name);
+  }
+
+  /// Rule for "always ignore this sender", or null when the sender is unknown.
+  MuteRule? senderRuleFor(DetectedTransaction i) {
+    final s = i.sender;
+    if (s == null) return null;
+    final label = i.sourceKind == 'notification'
+        ? i.appLabel
+        : (i.appLabel == 'Bank SMS' ? s : '${i.appLabel} ($s)');
+    return MuteRule(type: 'sender', value: s, label: label);
+  }
+
+  /// Adds a rule and dismisses the matching payments waiting for review.
+  /// Returns the ids it dismissed (for undo).
+  Future<List<String>> addMute(MuteRule rule) async {
+    if (!_mutes.contains(rule)) _mutes.add(rule);
+    final hidden = <String>[];
+    for (final i in pending) {
+      if (_matchesMute(rule, i)) {
+        _replace(i.copyWith(status: 'dismissed'));
+        hidden.add(i.id);
+      }
+    }
+    await _saveMutes();
+    await _save();
+    notifyListeners();
+    return hidden;
+  }
+
+  Future<void> removeMute(MuteRule rule) async {
+    _mutes.remove(rule);
+    await _saveMutes();
+    notifyListeners();
   }
 
   static const _notSpendingFlags = {'transfer', 'card-bill'};
@@ -500,8 +694,12 @@ class CaptureProvider extends ChangeNotifier {
   }
 
   /// Dismisses everything waiting for review. Returns their ids (for undo).
-  Future<List<String>> dismissAll() async {
-    final ids = pending.map((i) => i.id).toList();
+  Future<List<String>> dismissAll({Iterable<String>? only}) async {
+    final wanted = only?.toSet();
+    final ids = pending
+        .where((i) => wanted == null || wanted.contains(i.id))
+        .map((i) => i.id)
+        .toList();
     for (final id in ids) {
       final item = byId(id);
       if (item != null) _replace(item.copyWith(status: 'dismissed'));
@@ -509,6 +707,18 @@ class CaptureProvider extends ChangeNotifier {
     await _save();
     notifyListeners();
     return ids;
+  }
+
+  /// Dismisses the given items (undo for "Restore all").
+  Future<void> dismissMany(List<String> ids) async {
+    for (final id in ids) {
+      final item = byId(id);
+      if (item != null && item.isPending) {
+        _replace(item.copyWith(status: 'dismissed'));
+      }
+    }
+    await _save();
+    notifyListeners();
   }
 
   /// Undo for [dismissAll].
@@ -554,6 +764,26 @@ class CaptureProvider extends ChangeNotifier {
         return;
       }
     }
+  }
+
+  /// An expense's category was changed later (from its edit screen). If it
+  /// came from detection, remember that payee's category and keep the
+  /// detected item in step; otherwise learn from the payee typed in.
+  Future<void> learnFromEdit(String? transactionId, String category,
+      {String? payee}) async {
+    String? merchant;
+    if (transactionId != null && transactionId.startsWith('cap-')) {
+      final item = byId(transactionId.substring(4));
+      if (item != null) {
+        merchant = item.merchant;
+        _replace(item.copyWith(category: category));
+        await _save();
+      }
+    }
+    merchant ??= payee;
+    if (merchant == null || merchant.trim().isEmpty) return;
+    _learn(merchant, category);
+    notifyListeners();
   }
 
   void _learn(String? merchant, String category) {

@@ -119,6 +119,8 @@ class TransactionParser {
     _ci(r"\b(?:payee|beneficiary|merchant|remitter|sender|biller)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9&.' \-]{1,40})"),
     _ci(r";\s*([A-Za-z][A-Za-z0-9&.' \-]{1,40}?)\s+credited\b"),
     _ci(r"\btrf\s+to\s+([A-Za-z0-9][A-Za-z0-9&.' \-]{1,40})"),
+    // merchant receipts: "Thank you for shopping at DMart", "…for choosing Croma"
+    _ci(r"\bthanks?\s*(?:you\s*)?for\s+(?:shopping|dining|choosing|visiting|ordering)\s+(?:at\s+|with\s+|from\s+)?([A-Za-z0-9][A-Za-z0-9&.' \-]{1,40})"),
   ];
   static final _preposition =
       _ci(r"\b(at|to|towards|from|by|for)\s+([A-Za-z0-9][A-Za-z0-9&.'\-_ ]{1,45})");
@@ -130,7 +132,7 @@ class TransactionParser {
   static final _junkTail = _ci(
       r"\s*\b(avl|avlbl|avbl|available|bal|balance|lmt|limit|ref|refno|rrn|utr|info|not\s*you|if\s*not|call|sms|upi|imps|neft|txn|a\/c|acct|on|dated|date|via|using|with|thru|through|inr|rs|card|ac|value|is|has|was|of|from|for|to|at|successful(ly)?|done|completed)\b.*$");
   static final _stopStart = _ci(
-      r"^(payment|transaction|txn|transfer|purchase|order|amount|money|fund|funds|the\s+payment|online|pos\b|a\/c|ac\b|acct|account|your|you\b|the\s+(?:a\/c|account)|card|debit\s*card|credit\s*card|upi\b|vpa\b|bank\b|a\s|an\s|self\b|beneficiary\b|mobile|number|registered|linked|wallet\b|savings|current|loan\b|x{2,}|\*{2,}|\d)");
+      r"^(shopping|dining|using|visiting|choosing|banking|being|making|payment|transaction|txn|transfer|purchase|order|amount|money|fund|funds|the\s+payment|online|pos\b|a\/c|ac\b|acct|account|your|you\b|the\s+(?:a\/c|account)|card|debit\s*card|credit\s*card|upi\b|vpa\b|bank\b|a\s|an\s|self\b|beneficiary\b|mobile|number|registered|linked|wallet\b|savings|current|loan\b|x{2,}|\*{2,}|\d)");
   static final _bankName = _ci(
       r"^(hdfc|sbi|state\s*bank|icici|axis|kotak|pnb|punjab|bob|bank\s*of|canara|union|indian\s*bank|idbi|yes\s*bank|indusind|idfc|federal|rbl|au\s*small|paytm\s*(payments\s*)?bank|airtel\s*payments|citi|hsbc|standard\s*chartered|uco|iob|central\s*bank)\b");
   static final _qrJunk = _ci(r"^(paytmqr|bharatpe|q\d{5,}|gpay-\d+|pay\d{6,}|\d)");

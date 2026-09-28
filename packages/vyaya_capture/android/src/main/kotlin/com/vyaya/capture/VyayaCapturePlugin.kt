@@ -98,6 +98,11 @@ class VyayaCapturePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Event
                     .mapNotNull { (it as? Number)?.toLong() }
                 background(result) { CaptureStore.get(context).markConsumed(ids); null }
             }
+            "forget" -> {
+                val ids = (call.argument<List<Any>>("ids") ?: emptyList())
+                    .mapNotNull { (it as? Number)?.toLong() }
+                background(result) { CaptureStore.get(context).forget(ids); null }
+            }
             "pendingCount" -> background(result) { CaptureStore.get(context).pendingCount() }
             "backfillSms" -> {
                 val since = (call.argument<Any>("sinceMillis") as? Number)?.toLong() ?: 0L
@@ -133,10 +138,16 @@ class VyayaCapturePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Event
         return flat.split(":").any { ComponentName.unflattenFromString(it)?.packageName == context.packageName }
     }
 
-    /** Queues transaction-like SMS from the inbox received after [sinceMs]. */
+    /**
+     * Queues transaction-like SMS from the inbox received after [sinceMs].
+     * Goes back by date: every message in the window is checked, and [limit]
+     * caps only how many payment-like ones are taken (OTPs and promos don't
+     * count towards it, so a busy inbox still reaches the full 30 days).
+     */
     private fun backfill(sinceMs: Long, limit: Int): Int {
         val store = CaptureStore.get(context)
         var queued = 0
+        var matched = 0
         val cursor = context.contentResolver.query(
             Telephony.Sms.Inbox.CONTENT_URI,
             arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE),
@@ -145,13 +156,12 @@ class VyayaCapturePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Event
             "${Telephony.Sms.DATE} DESC"
         ) ?: return 0
         cursor.use {
-            var seen = 0
-            while (it.moveToNext() && seen < limit) {
-                seen++
+            while (it.moveToNext() && matched < limit) {
                 val sender = it.getString(0) ?: continue
                 val body = it.getString(1)?.trim() ?: continue
                 val date = it.getLong(2)
                 if (!CaptureFilter.looksLikeTransaction(body)) continue
+                matched++
                 if (store.insert("sms", sender, body, date, backfill = true)) queued++
             }
         }

@@ -79,6 +79,28 @@ class CaptureStore private constructor(context: Context) :
             if (it.moveToFirst()) it.getInt(0) else 0
         }
 
+    /**
+     * Forgets captures completely (the user removed them from the review
+     * list), so a later SMS import can queue those messages again.
+     */
+    fun forget(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (chunk in ids.chunked(500)) {
+                val placeholders = chunk.joinToString(",") { "?" }
+                db.execSQL(
+                    "DELETE FROM captures WHERE id IN ($placeholders)",
+                    chunk.map { it.toString() }.toTypedArray()
+                )
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun markConsumed(ids: List<Long>) {
         if (ids.isEmpty()) return
         val db = writableDatabase

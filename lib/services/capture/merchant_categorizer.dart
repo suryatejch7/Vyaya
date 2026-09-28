@@ -68,10 +68,19 @@ class MerchantCategorizer {
     required String rawText,
     required List<String> categoryNames,
     required Map<String, String> learned,
+    // Category id -> current name. Default categories keep ids like "food",
+    // so a renamed "Food" (now "Meals") still gets the food keywords.
+    Map<String, String> aliases = const {},
   }) {
     String? existing(String name) {
       for (final c in categoryNames) {
         if (c.toLowerCase() == name.toLowerCase()) return c;
+      }
+      final renamed = aliases[name.toLowerCase()];
+      if (renamed != null) {
+        for (final c in categoryNames) {
+          if (c == renamed) return c;
+        }
       }
       return null;
     }

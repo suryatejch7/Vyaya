@@ -190,4 +190,9 @@ void main() {
   test('#155 not a bill or transfer 500', () => _accept('Paid Rs 500 for order using your credit card XX1234', 500.0, true, null, absent: const ['card-bill', 'transfer']));
   test('#156 not a bill or transfer 500', () => _accept('Paid Rs 500 to Swiggy using your credit card', 500.0, true, 'Swiggy', absent: const ['card-bill', 'transfer']));
   test('#157 card bill 8000', () => _accept('Bill payment of Rs 8,000 for your ICICI credit card was successful', 8000.0, true, null, flag: 'card-bill'));
+  // Merchant receipts: the store name, not "Shopping".
+  test('#158 receipt DMart', () => _accept('Thank you for shopping at DMart. Your bill amount Rs 1,250 paid via UPI.', 1250.0, true, 'DMart'));
+  test('#159 card at Big Bazaar', () => _accept('Thank you for using your HDFC Debit Card XX1234 for Rs 540 at Big Bazaar on 12-09-26', 540.0, true, 'Big Bazaar'));
+  test('#160 dining', () => _accept('Thanks for dining at Barbeque Nation. Rs 2,400 paid by card XX9911.', 2400.0, true, 'Barbeque Nation'));
+  test('#161 choosing', () => _accept('Thank you for choosing Croma. Rs 15,999 debited from A/c XX1234.', 15999.0, true, 'Croma'));
 }

@@ -53,6 +53,13 @@ class AccountManager {
     await _saveAccounts(userId);
   }
 
+  Future<void> updateAccount(BankAccount account, int userId) async {
+    final i = _accounts.indexWhere((a) => a.id == account.id);
+    if (i == -1) return;
+    _accounts[i] = account;
+    await _saveAccounts(userId);
+  }
+
   Future<void> setDefaultAccount(String accountId, int userId) async {
     for (int i = 0; i < _accounts.length; i++) {
       _accounts[i] = _accounts[i].copyWith(

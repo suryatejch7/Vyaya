@@ -361,6 +361,14 @@ class ExpenseProvider extends ChangeNotifier {
     try {
       _isLoading = true;
       notifyListeners();
+      // Deleting a month's Saved entry yourself means "not for this month":
+      // remember it so it isn't recreated.
+      final target =
+          _expenseManager.expenses.where((e) => e.id == expenseId).firstOrNull;
+      final savedMonth = target == null ? null : _savedMonthOf(target);
+      if (savedMonth != null) {
+        await _setSkippedSavingsMonths(_skippedSavingsMonths..add(savedMonth));
+      }
       await _expenseManager.deleteExpense(expenseId, _userId);
       await _resyncSavings();
       _refreshCalculations();
@@ -564,6 +572,55 @@ class ExpenseProvider extends ChangeNotifier {
     }
   }
 
+  /// Edits a category. A rename moves every expense and recurring entry to
+  /// the new name (expenses store the category by name).
+  Future<void> updateCategory(String id,
+      {required String name, required String icon, required Color color}) async {
+    final idx = _customCategories.indexWhere((c) => c.id == id);
+    if (idx == -1) return;
+    final old = _customCategories[idx];
+    final newName = name.trim();
+    if (newName.isEmpty) throw ArgumentError('Name can\'t be empty');
+    if (newName.toLowerCase() != old.name.toLowerCase() &&
+        _customCategories.any((c) =>
+            c.id != id && c.name.toLowerCase() == newName.toLowerCase())) {
+      throw ArgumentError('A category called "$newName" already exists');
+    }
+    final renamed = newName != old.name;
+    final snapshot = List<ExpenseCategory>.from(_customCategories);
+    try {
+      _customCategories[idx] = ExpenseCategory(
+        id: old.id,
+        name: newName,
+        icon: icon,
+        color: color,
+        isDefault: old.isDefault,
+      );
+      await LocalStore.saveCustomCategories(_customCategories,
+          userId: _userId);
+      if (renamed) {
+        await LocalStore.reassignExpenseCategories({old.name: newName},
+            userId: _userId);
+        var recurringChanged = false;
+        for (var i = 0; i < _recurring.length; i++) {
+          if (_recurring[i].category == old.name) {
+            _recurring[i] = _recurring[i].copyWith(category: newName);
+            recurringChanged = true;
+          }
+        }
+        if (recurringChanged) await _saveRecurring();
+        await reloadExpenses(); // refresh lists, totals and analytics
+      }
+      notifyListeners();
+    } catch (e) {
+      _customCategories
+        ..clear()
+        ..addAll(snapshot);
+      notifyListeners();
+      rethrow;
+    }
+  }
+
   Future<void> removeCustomCategory(String categoryId) async {
     try {
       _customCategories.removeWhere((cat) => cat.id == categoryId);
@@ -675,9 +732,14 @@ class ExpenseProvider extends ChangeNotifier {
   // ==================== UNDO (re-add deleted items) ====================
 
   Future<void> restoreExpenses(List<Expense> expenses) async {
+    final skipped = _skippedSavingsMonths;
+    var skipChanged = false;
     for (final e in expenses) {
+      final savedMonth = _savedMonthOf(e);
+      if (savedMonth != null) skipChanged |= skipped.remove(savedMonth);
       await _expenseManager.addExpense(e, _userId);
     }
+    if (skipChanged) await _setSkippedSavingsMonths(skipped);
     await _resyncSavings();
     notifyListeners();
   }
@@ -768,15 +830,8 @@ class ExpenseProvider extends ChangeNotifier {
     var r = _recurring[i].copyWith(active: active);
     if (active) {
       final today = _dateOnly(DateTime.now());
-      final thisMonth =
-          RecurringEntry.occurrenceIn(today.year, today.month, r.dayOfMonth);
       if (r.nextDue.isBefore(today)) {
-        r = r.copyWith(
-          nextDue: thisMonth.isBefore(today)
-              ? RecurringEntry.occurrenceIn(
-                  today.year, today.month + 1, r.dayOfMonth)
-              : thisMonth,
-        );
+        r = r.copyWith(nextDue: r.occurrenceOnOrAfter(today));
       }
     }
     _recurring[i] = r;
@@ -791,8 +846,8 @@ class ExpenseProvider extends ChangeNotifier {
     for (var i = 0; i < _recurring.length; i++) {
       var r = _recurring[i];
       if (!r.active) continue;
-      var guard = 0; // catch-up cap: 24 months
-      while (!r.nextDue.isAfter(today) && guard < 24) {
+      var guard = 0; // catch-up cap (104 weeks / 24 months / 3 years)
+      while (!r.nextDue.isAfter(today) && guard < r.catchUpLimit) {
         await _createFromRecurring(r, r.nextDue);
         r = r.copyWith(nextDue: r.nextAfter(r.nextDue));
         changed = true;
@@ -856,13 +911,52 @@ class ExpenseProvider extends ChangeNotifier {
 
   bool _savingsRunning = false;
 
+  /// Month-end savings on/off (Settings → Money). On by default.
+  bool get monthEndSavingsEnabled =>
+      LocalStore.getMeta('savings_enabled', userId: _userId) != '0';
+
+  /// Months whose Saved entry you deleted yourself; they aren't recreated.
+  Set<String> get _skippedSavingsMonths {
+    final raw = LocalStore.getMeta('savings_skip', userId: _userId);
+    if (raw == null || raw.isEmpty) return {};
+    return raw.split(',').where((s) => s.isNotEmpty).toSet();
+  }
+
+  Future<void> _setSkippedSavingsMonths(Set<String> months) =>
+      LocalStore.setMeta('savings_skip', (months.toList()..sort()).join(','),
+          userId: _userId);
+
+  /// Month key ("2026-09") of an automatic Saved entry.
+  static String? _savedMonthOf(Expense e) => _isAutoSaved(e)
+      ? e.transactionId!.substring(_autoSavedPrefix.length)
+      : null;
+
+  /// Turns month-end savings on or off. Turning off can also delete the
+  /// Saved entries already made. Turning back on starts from this month
+  /// (earlier months aren't back-filled).
+  Future<void> setMonthEndSavings(bool on, {bool removeExisting = false}) async {
+    await LocalStore.setMeta('savings_enabled', on ? '1' : '0',
+        userId: _userId);
+    if (on) {
+      final now = DateTime.now();
+      await LocalStore.setMeta(
+          'savings_from', _monthKey(DateTime(now.year, now.month)),
+          userId: _userId);
+    } else if (removeExisting) {
+      for (final e in _expenseManager.expenses.where(_isAutoSaved).toList()) {
+        if (e.id != null) await _expenseManager.deleteExpense(e.id!, _userId);
+      }
+    }
+    notifyListeners();
+  }
+
   /// Keeps every closed month's "Saved" entry equal to that month's
   /// leftover (income - spent, excluding the Saved entry itself). Creates,
   /// updates or removes it as needed, so late edits to a past month are
   /// reflected automatically. Months before this feature started are left
   /// alone (no back-filling).
   Future<void> _processMonthEndSavings() async {
-    if (_userId == 0 || _savingsRunning) return;
+    if (_userId == 0 || _savingsRunning || !monthEndSavingsEnabled) return;
     _savingsRunning = true;
     try {
       final now = DateTime.now();
@@ -885,9 +979,11 @@ class ExpenseProvider extends ChangeNotifier {
 
       final from = _parseMonthKey(fromKey);
       if (from == null) return;
+      final skipped = _skippedSavingsMonths;
       for (var m = from;
           m.isBefore(thisMonth);
           m = DateTime(m.year, m.month + 1)) {
+        if (skipped.contains(_monthKey(m))) continue; // you deleted it
         await _reconcileSavingsFor(m);
       }
     } finally {
@@ -1017,14 +1113,80 @@ class ExpenseProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setDebtSettled(String id, bool settled) async {
+  /// Settles or reopens an entry. With [record], settling also logs the
+  /// money that changed hands: income when someone repays you, an expense
+  /// when you repay them. Reopening removes that recorded entry again.
+  Future<void> setDebtSettled(String id, bool settled,
+      {bool record = false}) async {
     final i = _debts.indexWhere((d) => d.id == id);
     if (i == -1) return;
-    _debts[i] = settled
-        ? _debts[i].copyWith(settled: true, settledAt: DateTime.now())
-        : _debts[i].copyWith(settled: false, clearSettledAt: true);
+    final d = _debts[i];
+    if (settled) {
+      String? entryId;
+      if (record) entryId = await _recordSettlement(d);
+      _debts[i] = d.copyWith(
+          settled: true, settledAt: DateTime.now(), settlementEntryId: entryId);
+    } else {
+      final entry = d.settlementEntryId;
+      if (entry != null) {
+        try {
+          if (d.isLent) {
+            await deleteIncome(entry);
+          } else {
+            await deleteExpense(entry);
+          }
+        } catch (e) {
+          debugPrint('Removing settlement entry failed: $e');
+        }
+      }
+      _debts[i] = d.copyWith(
+          settled: false, clearSettledAt: true, clearSettlement: true);
+    }
     await _saveDebts();
     notifyListeners();
+  }
+
+  /// Logs a settlement and returns the new income/expense id.
+  Future<String?> _recordSettlement(DebtEntry d) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day, now.hour, now.minute);
+    final note = 'Settled from Lent & Borrowed'
+        '${d.note == null || d.note!.isEmpty ? '' : ' · ${d.note}'}';
+    if (d.isLent) {
+      await addIncome(Income(
+        amount: d.amount,
+        title: 'Repaid by ${d.person}',
+        source: d.person,
+        date: today,
+        notes: note,
+        accountId: defaultAccount?.id,
+        createdAt: now,
+        updatedAt: now,
+      ));
+      for (final inc in _incomeManager.incomes) {
+        if (inc.createdAt == now && (inc.amount - d.amount).abs() < 0.009) {
+          return inc.id;
+        }
+      }
+      return null;
+    }
+    final tag = 'debt-${d.id}-${now.millisecondsSinceEpoch}';
+    await addExpense(Expense(
+      amount: d.amount,
+      description: 'Repaid ${d.person}',
+      category: categoryBucket('Other'),
+      date: today,
+      paymentApp: 'Lent & Borrowed',
+      transactionId: tag,
+      notes: note,
+      accountId: defaultAccount?.id,
+      createdAt: now,
+      updatedAt: now,
+    ));
+    for (final e in _expenseManager.expenses) {
+      if (e.transactionId == tag) return e.id;
+    }
+    return null;
   }
 
   /// Open (unsettled) balance per person: + they owe you, - you owe them.
@@ -1137,6 +1299,13 @@ class ExpenseProvider extends ChangeNotifier {
     } catch (e) {
       throw Exception('Failed to remove account: $e');
     }
+  }
+
+  /// Rename an account or change its type. Entries point at the account id,
+  /// so nothing else has to change.
+  Future<void> updateAccount(BankAccount account) async {
+    await _accountManager.updateAccount(account, _userId);
+    notifyListeners();
   }
 
   Future<void> setDefaultAccount(String accountId) async {

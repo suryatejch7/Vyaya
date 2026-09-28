@@ -12,6 +12,10 @@ class DebtEntry {
   final bool settled;
   final DateTime? settledAt;
 
+  /// Income (lent) or expense (borrowed) recorded when it was settled, so
+  /// reopening the entry can remove it again. Null if nothing was recorded.
+  final String? settlementEntryId;
+
   DebtEntry({
     required this.id,
     required this.person,
@@ -21,6 +25,7 @@ class DebtEntry {
     this.note,
     this.settled = false,
     this.settledAt,
+    this.settlementEntryId,
   });
 
   /// + if they owe you, - if you owe them.
@@ -36,6 +41,7 @@ class DebtEntry {
         settled: j['settled'] as bool? ?? false,
         settledAt:
             j['settled_at'] != null ? DateTime.parse(j['settled_at']) : null,
+        settlementEntryId: j['settlement_entry_id'],
       );
 
   Map<String, dynamic> toJson() => {
@@ -47,6 +53,7 @@ class DebtEntry {
         'note': note,
         'settled': settled,
         'settled_at': settledAt?.toIso8601String(),
+        'settlement_entry_id': settlementEntryId,
       };
 
   DebtEntry copyWith({
@@ -58,6 +65,8 @@ class DebtEntry {
     bool? settled,
     DateTime? settledAt,
     bool clearSettledAt = false,
+    String? settlementEntryId,
+    bool clearSettlement = false,
   }) =>
       DebtEntry(
         id: id,
@@ -68,5 +77,8 @@ class DebtEntry {
         note: note ?? this.note,
         settled: settled ?? this.settled,
         settledAt: clearSettledAt ? null : (settledAt ?? this.settledAt),
+        settlementEntryId: clearSettlement
+            ? null
+            : (settlementEntryId ?? this.settlementEntryId),
       );
 }

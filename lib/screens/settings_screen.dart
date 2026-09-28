@@ -140,15 +140,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
 
   /// Card without a title (profile header).
-  Widget _plainCard({required Widget child}) => Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
+  Widget _plainCard({required Widget child}) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Material(
           color: const Color(0xFF0D0D0D),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.grey.withValues(alpha: 0.15)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(padding: const EdgeInsets.all(16), child: child),
         ),
-        child: child,
       );
 
   Widget _groupLabel(String text) => Padding(
@@ -165,12 +167,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
 
   /// Rounded group of rows with thin dividers between them.
-  Widget _group(List<Widget> rows) => Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF0D0D0D),
+  // A Material (not a decorated Container) so the ListTiles inside paint
+  // their ink splashes on it.
+  Widget _group(List<Widget> rows) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Material(
+        color: const Color(0xFF0D0D0D),
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+          side: BorderSide(color: Colors.grey.withValues(alpha: 0.15)),
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -185,6 +190,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               rows[i],
             ],
           ],
+        ),
         ),
       );
 
@@ -278,12 +284,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   color: Colors.teal,
                   title: 'Recurring',
                   subtitle: activeRecurring == 0
-                      ? 'Monthly income and bills'
+                      ? 'Weekly, monthly or yearly income and bills'
                       : '$activeRecurring active',
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
                         builder: (context) => const RecurringScreen()),
+                  ),
+                ),
+                _row(
+                  icon: Icons.savings_outlined,
+                  color: Colors.green,
+                  title: 'Month-end savings',
+                  subtitle: expenseProvider.monthEndSavingsEnabled
+                      ? 'Leftover each month goes into "Saved"'
+                      : 'Off',
+                  chevron: false,
+                  onTap: () => _toggleMonthEndSavings(
+                      expenseProvider, !expenseProvider.monthEndSavingsEnabled),
+                  trailing: Switch(
+                    value: expenseProvider.monthEndSavingsEnabled,
+                    onChanged: (v) => _toggleMonthEndSavings(expenseProvider, v),
                   ),
                 ),
               ]),
@@ -667,7 +688,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               onLongPress: () => _toggleCategorySelection(category.id),
                               onTap: _isCategorySelectionMode
                                   ? () => _toggleCategorySelection(category.id)
-                                  : null,
+                                  : () => _showAddCategoryDialog(
+                                      editing: category),
                               child: AnimatedContainer(
                               duration: const Duration(milliseconds: 150),
                               padding: const EdgeInsets.all(12),
@@ -719,7 +741,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           GestureDetector(
-                                            onTap: () => _showExpenseCategoryBudgetDialog(category),
+                                            onTap: () => _showAddCategoryDialog(
+                                                editing: category),
                                             child: const Icon(Icons.edit, color: Colors.grey, size: 18),
                                           ),
                                           const SizedBox(width: 8),
@@ -781,29 +804,78 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 );
   }
 
-  void _showAddCategoryDialog() {
-    _categoryNameController.clear();
-    String selectedIcon = '📦';
-    Color selectedColor = Colors.blue;
+  /// Add a category, or edit [editing] (name, icon, colour, monthly limit).
+  void _showAddCategoryDialog({ExpenseCategory? editing}) {
+    final provider = context.read<ExpenseProvider>();
+    final isEdit = editing != null;
+    _categoryNameController.text = editing?.name ?? '';
+    String selectedIcon = editing?.icon ?? '📦';
+    Color selectedColor = editing?.color ?? _categoryColors[8];
+    // Open the icon group that holds the current icon.
+    String group = _categoryEmojiGroups.entries
+            .where((e) => e.value.contains(selectedIcon))
+            .map((e) => e.key)
+            .firstOrNull ??
+        _categoryEmojiGroups.keys.first;
+    final inGroups =
+        _categoryEmojiGroups.values.any((g) => g.contains(selectedIcon));
+    final customIcon =
+        TextEditingController(text: isEdit && !inGroups ? selectedIcon : '');
+    // Keep a colour picked before the palette existed selectable.
+    final colors = [
+      if (isEdit &&
+          !_categoryColors.any((c) => c.toARGB32() == selectedColor.toARGB32()))
+        selectedColor,
+      ..._categoryColors,
+    ];
+    // "Other" catches expenses whose category was deleted and "Saved" is
+    // managed by month-end savings, so their names stay fixed.
+    final nameLocked = editing != null &&
+        (editing.name == 'Other' ||
+            editing.name == ExpenseProvider.savedCategoryName);
+    final existingLimit =
+        editing != null ? provider.getCustomCategoryBudget(editing.id) : 0.0;
+    final limitController = TextEditingController(
+        text: existingLimit > 0 ? existingLimit.toStringAsFixed(0) : '');
+    String? nameError;
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
-          title: const Text(
-            'Add Category',
-            style: TextStyle(color: Colors.white),
+          title: Text(
+            isEdit ? 'Edit Category' : 'Add Category',
+            style: const TextStyle(color: Colors.white),
           ),
-          content: SingleChildScrollView(
+          // Fixed width: AlertDialog measures its content's intrinsic
+          // width, which the horizontal icon-group list can't report.
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 // Category Name Input
                 TextField(
                   controller: _categoryNameController,
-                  style: const TextStyle(color: Colors.white),
+                  enabled: !nameLocked,
+                  textCapitalization: TextCapitalization.words,
+                  style: TextStyle(
+                      color: nameLocked ? Colors.grey : Colors.white),
+                  onChanged: (_) {
+                    if (nameError != null) setState(() => nameError = null);
+                  },
                   decoration: InputDecoration(
+                    errorText: nameError,
+                    helperText: nameLocked
+                        ? 'This category\'s name is used by the app, so it can\'t change'
+                        : isEdit
+                            ? 'Renaming updates every expense in it'
+                            : null,
+                    helperMaxLines: 2,
+                    helperStyle:
+                        const TextStyle(color: Colors.grey, fontSize: 11),
                     labelText: 'Category Name',
                     labelStyle: const TextStyle(color: Colors.grey),
                     border: OutlineInputBorder(
@@ -823,101 +895,215 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
 
-                // Icon Selection (simplified)
-                const Text(
-                  'Choose Icon',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                // Live preview on the left, monthly limit beside it.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        color: selectedColor.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: selectedColor, width: 1.5),
+                      ),
+                      child: Center(
+                        child: Text(selectedIcon,
+                            style: const TextStyle(fontSize: 28)),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: limitController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          labelText: 'Monthly limit',
+                          labelStyle: const TextStyle(color: Colors.grey),
+                          hintText: 'Optional',
+                          hintStyle: const TextStyle(color: Colors.grey),
+                          prefixText: '₹ ',
+                          helperText: 'Alerts you when a month goes over it',
+                          helperMaxLines: 2,
+                          helperStyle:
+                              const TextStyle(color: Colors.grey, fontSize: 11),
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                                color: Colors.grey.withValues(alpha: 0.5)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Choose Icon',
+                    style: TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // Icon groups
+                SizedBox(
+                  height: 36,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      for (final g in _categoryEmojiGroups.keys)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ChoiceChip(
+                            label: Text(g),
+                            selected: g == group,
+                            showCheckmark: false,
+                            onSelected: (_) => setState(() => group = g),
+                            labelStyle: TextStyle(
+                              fontSize: 12,
+                              color: g == group ? Colors.black : Colors.white70,
+                            ),
+                            selectedColor:
+                                Theme.of(context).colorScheme.primary,
+                            backgroundColor: const Color(0xFF1A1A1A),
+                            side: BorderSide.none,
+                            shape: const StadiumBorder(),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: ['📦', '🍽️', '🚗', '🛒', '🎬', '💡', '🏥', '📚', '💳', '🎯'].map((icon) {
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: _categoryEmojiGroups[group]!.map((icon) {
                     final isSelected = icon == selectedIcon;
                     return GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          selectedIcon = icon;
-                        });
-                      },
+                      onTap: () => setState(() {
+                        selectedIcon = icon;
+                        customIcon.clear();
+                      }),
                       child: Container(
-                        width: 50,
-                        height: 50,
+                        width: 42,
+                        height: 42,
                         decoration: BoxDecoration(
-                          color: isSelected ? selectedColor.withValues(alpha: 0.3) : Colors.transparent,
-                          borderRadius: BorderRadius.circular(8),
+                          color: isSelected
+                              ? selectedColor.withValues(alpha: 0.3)
+                              : Colors.white.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(10),
                           border: Border.all(
-                            color: isSelected ? selectedColor : Colors.grey.withValues(alpha: 0.3),
-                            width: isSelected ? 2 : 1,
+                            color: isSelected
+                                ? selectedColor
+                                : Colors.transparent,
+                            width: 2,
                           ),
                         ),
                         child: Center(
-                          child: Text(
-                            icon,
-                            style: const TextStyle(fontSize: 24),
-                          ),
+                          child: Text(icon,
+                              style: const TextStyle(fontSize: 22)),
                         ),
                       ),
                     );
                   }).toList(),
                 ),
+                const SizedBox(height: 12),
+                // Any emoji from the keyboard, shown in the same tile.
+                TextField(
+                  controller: customIcon,
+                  style: const TextStyle(color: Colors.white, fontSize: 20),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Or type any emoji',
+                    hintStyle:
+                        const TextStyle(color: Colors.grey, fontSize: 14),
+                    prefixIcon: const Icon(Icons.emoji_emotions_outlined,
+                        color: Colors.grey, size: 20),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                          color: Colors.grey.withValues(alpha: 0.5)),
+                    ),
+                  ),
+                  onChanged: (value) {
+                    final emoji = _singleEmoji(value);
+                    if (emoji == null) return;
+                    setState(() => selectedIcon = emoji);
+                    if (customIcon.text != emoji) {
+                      customIcon.value = TextEditingValue(
+                        text: emoji,
+                        selection:
+                            TextSelection.collapsed(offset: emoji.length),
+                      );
+                    }
+                  },
+                ),
                 const SizedBox(height: 20),
 
-                // Color Selection (simplified)
-                const Text(
-                  'Choose Color',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Choose Color',
+                    style: TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    Colors.blue,
-                    Colors.green,
-                    Colors.cyan,
-                    Colors.orange,
-                    Colors.purple,
-                    Colors.pink,
-                    Colors.teal,
-                    Colors.amber,
-                  ].map((color) {
-                    final isSelected = color == selectedColor;
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: colors.map((color) {
+                    final isSelected =
+                        color.toARGB32() == selectedColor.toARGB32();
                     return GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          selectedColor = color;
-                        });
-                      },
-                      child: Container(
-                        width: isSelected ? 50 : 40,
-                        height: isSelected ? 50 : 40,
+                      onTap: () => setState(() => selectedColor = color),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        width: 36,
+                        height: 36,
                         decoration: BoxDecoration(
                           color: color,
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: isSelected ? Colors.white : Colors.transparent,
+                            color: isSelected
+                                ? Colors.white
+                                : Colors.transparent,
                             width: 3,
                           ),
-                          boxShadow: isSelected ? [
-                            BoxShadow(
-                              color: color.withValues(alpha: 0.5),
-                              blurRadius: 10,
-                              spreadRadius: 2,
-                            ),
-                          ] : null,
+                          boxShadow: isSelected
+                              ? [
+                                  BoxShadow(
+                                    color: color.withValues(alpha: 0.5),
+                                    blurRadius: 10,
+                                    spreadRadius: 1,
+                                  ),
+                                ]
+                              : null,
                         ),
                         child: isSelected
-                          ? const Icon(Icons.check, color: Colors.white, size: 20)
-                          : null,
+                            ? const Icon(Icons.check,
+                                color: Colors.white, size: 18)
+                            : null,
                       ),
                     );
                   }).toList(),
                 ),
               ],
             ),
+          ),
           ),
           actions: [
             TextButton(
@@ -926,7 +1112,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             ElevatedButton(
               onPressed: _isAddingCategory ? null : () async {
-                if (_categoryNameController.text.isNotEmpty) {
+                if (editing != null) {
+                  final navigator = Navigator.of(context);
+                  final messenger = ScaffoldMessenger.of(context);
+                  final capture = context.read<CaptureProvider>();
+                  final oldName = editing.name;
+                  final name = _categoryNameController.text.trim();
+                  if (name.isEmpty) {
+                    setState(() => nameError = 'Enter a name');
+                    return;
+                  }
+                  if (name.toLowerCase() != oldName.toLowerCase() &&
+                      provider.categories.any((c) =>
+                          c.id != editing.id &&
+                          c.name.toLowerCase() == name.toLowerCase())) {
+                    setState(() => nameError = 'You already have "$name"');
+                    return;
+                  }
+                  setState(() => _isAddingCategory = true);
+                  try {
+                    await provider.updateCategory(
+                      editing.id,
+                      name: name,
+                      icon: selectedIcon,
+                      color: selectedColor,
+                    );
+                    if (name != oldName) {
+                      await capture.renameCategory(oldName, name);
+                    }
+                    final limit = double.tryParse(
+                            limitController.text.replaceAll(',', '')) ??
+                        0;
+                    if (limit != existingLimit) {
+                      await provider.setCustomCategoryBudget(
+                          editing.id, limit < 0 ? 0 : limit);
+                    }
+                    navigator.pop();
+                    messenger.showSnackBar(SnackBar(
+                      content: Text('Saved "$name"'),
+                      duration: const Duration(seconds: 1),
+                    ));
+                  } catch (e) {
+                    messenger.showSnackBar(
+                        SnackBar(content: Text('Couldn\'t save: $e')));
+                  } finally {
+                    setState(() => _isAddingCategory = false);
+                  }
+                  return;
+                }
+                final newName = _categoryNameController.text.trim();
+                if (newName.isEmpty) {
+                  setState(() => nameError = 'Enter a name');
+                  return;
+                }
+                if (provider.categories.any(
+                    (c) => c.name.toLowerCase() == newName.toLowerCase())) {
+                  setState(() => nameError = 'You already have "$newName"');
+                  return;
+                }
+                {
                   setState(() {
                     _isAddingCategory = true;
                   });
@@ -934,7 +1178,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   try {
                     final newCategory = ExpenseCategory(
                       id: DateTime.now().millisecondsSinceEpoch.toString(),
-                      name: _categoryNameController.text,
+                      name: newName,
                       icon: selectedIcon,
                       colorHex: '#${(selectedColor.r * 255.0).round().toRadixString(16).padLeft(2, '0')}${(selectedColor.g * 255.0).round().toRadixString(16).padLeft(2, '0')}${(selectedColor.b * 255.0).round().toRadixString(16).padLeft(2, '0')}',
                       isDefault: false,
@@ -944,14 +1188,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     final scaffoldMessenger = ScaffoldMessenger.of(context);
                     final theme = Theme.of(context);
                     
-                    await context.read<ExpenseProvider>().addCustomCategory(newCategory);
-                    // No need for force refresh - addCustomCategory already handles local updates
+                    await provider.addCustomCategory(newCategory);
+                    final limit = double.tryParse(
+                            limitController.text.replaceAll(',', '')) ??
+                        0;
+                    if (limit > 0) {
+                      await provider.setCustomCategoryBudget(
+                          newCategory.id, limit);
+                    }
                     navigator.pop();
 
                     if (mounted) {
                       scaffoldMessenger.showSnackBar(
                         SnackBar(
-                          content: Text('Category "${_categoryNameController.text}" added successfully!'),
+                          content: Text('Category "$newName" added'),
                           backgroundColor: theme.colorScheme.primary,
                           duration: const Duration(seconds: 1),
                         ),
@@ -976,92 +1226,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                     ),
                   )
-                : const Text('Add'),
+                : Text(isEdit ? 'Save' : 'Add'),
             ),
           ],
         ),
       ),
     );
-  }
-
-  void _showExpenseCategoryBudgetDialog(ExpenseCategory category) {
-    final provider = context.read<ExpenseProvider>();
-    _categoryBudgetController.text = provider.getCustomCategoryBudget(category.id).toString();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF2A2A2A),
-        title: Text(
-          'Set Budget for ${category.name}',
-          style: const TextStyle(color: Colors.white),
-        ),
-        content: TextField(
-          controller: _categoryBudgetController,
-          style: const TextStyle(color: Colors.white),
-          keyboardType: TextInputType.number,
-          decoration: InputDecoration(
-            labelText: 'Budget Amount (₹) - Enter 0 for unlimited',
-            labelStyle: const TextStyle(color: Colors.grey),
-            prefixText: '₹ ',
-            prefixStyle: const TextStyle(color: Colors.white),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: Colors.grey.withValues(alpha: 0.5),
-              ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              final navigator = Navigator.of(context);
-              navigator.pop();
-            },
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final navigator = Navigator.of(context);
-              final scaffoldMessenger = ScaffoldMessenger.of(context);
-              final theme = Theme.of(context);
-              
-              final budget = double.tryParse(_categoryBudgetController.text) ?? 0;
-              await provider.setCustomCategoryBudget(category.id, budget);
-              // No need for force refresh - setCustomCategoryBudget already handles local updates
-              navigator.pop();
-              if (mounted) {
-                scaffoldMessenger.showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      budget > 0
-                          ? 'Budget set to ₹${budget.toStringAsFixed(0)} for ${category.name}'
-                          : 'Budget removed for ${category.name}',
-                    ),
-                    backgroundColor: theme.colorScheme.primary,
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.primary,
-            ),
-            child: const Text('Set Budget'),
-          ),
-        ],
-      ),
-    );
+    // customIcon / limitController aren't disposed here on purpose: the
+    // dialog's future completes when it starts closing, while its text
+    // fields are still on screen, and disposing then crashes the frame.
+    // They're local and get garbage-collected with the dialog.
   }
 
   Widget _buildCategorySelectionBar(ExpenseProvider provider) {
@@ -1290,16 +1464,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.history, color: Colors.grey),
-                  title: const Text('Import last 30 days of bank SMS',
+                  title: const Text('Import past bank SMS',
                       style: TextStyle(color: Colors.white)),
                   subtitle: const Text(
-                      'Imported payments always wait for your review',
+                      'Pick how far back. Imported payments always wait for your review',
                       style: TextStyle(color: Colors.grey)),
                   onTap: () async {
                     final messenger = ScaffoldMessenger.of(context);
+                    final since = await _pickImportStart();
+                    if (since == null) return;
                     messenger.showSnackBar(
                         const SnackBar(content: Text('Importing…')));
-                    final n = await cap.importRecentSms();
+                    final n = await cap.importSmsSince(since);
                     messenger.hideCurrentSnackBar();
                     messenger.showSnackBar(SnackBar(
                       content: Text(n == 0
@@ -1474,7 +1650,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           else
             // Accounts List
             ...expenseProvider.accounts.map((account) {
-              return Container(
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _showAddAccountDialog(editing: account),
+                child: Container(
                 margin: const EdgeInsets.only(bottom: 12),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -1564,17 +1743,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             tooltip: 'Set as default',
                           ),
                         IconButton(
+                          onPressed: () =>
+                              _showAddAccountDialog(editing: account),
+                          icon: const Icon(
+                            Icons.edit,
+                            color: Colors.grey,
+                            size: 20,
+                          ),
+                          tooltip: 'Edit',
+                        ),
+                        IconButton(
                           onPressed: () => _showDeleteAccountDialog(account),
                           icon: const Icon(
                             Icons.delete,
                             color: Colors.red,
                             size: 20,
                           ),
+                          tooltip: 'Delete',
                         ),
                       ],
                     ),
                   ],
                 ),
+              ),
               );
             }),
         ],
@@ -1582,18 +1773,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showAddAccountDialog() {
-    final accountNameController = TextEditingController();
-    AccountType selectedType = AccountType.savings;
+  /// Add an account, or rename / retype [editing].
+  void _showAddAccountDialog({BankAccount? editing}) {
+    final accountNameController =
+        TextEditingController(text: editing?.name ?? '');
+    AccountType selectedType = editing?.type ?? AccountType.savings;
+    String? nameError;
+    // "Current" isn't offered any more; keep it only for an account that
+    // already uses it.
+    final types = AccountType.values
+        .where((t) => t != AccountType.current || editing?.type == t)
+        .toList();
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
-          title: const Text(
-            'Add Account',
-            style: TextStyle(color: Colors.white),
+          title: Text(
+            editing != null ? 'Edit Account' : 'Add Account',
+            style: const TextStyle(color: Colors.white),
           ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1601,8 +1800,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
               TextField(
                 controller: accountNameController,
                 style: const TextStyle(color: Colors.white),
-                autofocus: true,
+                autofocus: editing == null,
+                textCapitalization: TextCapitalization.words,
+                onChanged: (_) {
+                  if (nameError != null) {
+                    setDialogState(() => nameError = null);
+                  }
+                },
                 decoration: InputDecoration(
+                  errorText: nameError,
+                  helperText:
+                      'Tip: add the last 4 digits (e.g. "ICICI 1234") so auto-detect can tell your accounts apart',
+                  helperMaxLines: 2,
+                  helperStyle:
+                      const TextStyle(color: Colors.grey, fontSize: 11),
                   hintText: 'e.g., SBI, HDFC, Axis',
                   hintStyle: const TextStyle(color: Colors.grey),
                   filled: true,
@@ -1622,7 +1833,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 16),
               // Account type selector
               Row(
-                children: AccountType.values.map((type) {
+                children: types.map((type) {
                   final isSelected = selectedType == type;
                   return Expanded(
                     child: GestureDetector(
@@ -1698,11 +1909,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ElevatedButton(
               onPressed: () async {
                 final name = accountNameController.text.trim();
-                if (name.isEmpty) return;
-
                 final navigator = Navigator.of(context);
                 final scaffoldMessenger = ScaffoldMessenger.of(context);
                 final provider = context.read<ExpenseProvider>();
+                if (name.isEmpty) {
+                  setDialogState(() => nameError = 'Enter a name');
+                  return;
+                }
+                if (provider.accounts.any((a) =>
+                    a.id != editing?.id &&
+                    a.name.toLowerCase() == name.toLowerCase())) {
+                  setDialogState(() => nameError = 'You already have "$name"');
+                  return;
+                }
+                if (editing != null) {
+                  await provider.updateAccount(
+                      editing.copyWith(name: name, type: selectedType));
+                  navigator.pop();
+                  scaffoldMessenger.showSnackBar(SnackBar(
+                    content: Text('Saved "$name"'),
+                    duration: const Duration(seconds: 1),
+                  ));
+                  return;
+                }
 
                 final newAccount = BankAccount(
                   id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -1728,7 +1957,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Theme.of(context).colorScheme.primary,
               ),
-              child: const Text('Add'),
+              child: Text(editing != null ? 'Save' : 'Add'),
             ),
           ],
         ),
@@ -1849,6 +2078,138 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  /// Month-end savings switch. Turning it off asks whether to keep the Saved
+  /// entries already made.
+  Future<void> _toggleMonthEndSavings(ExpenseProvider provider, bool on) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (on) {
+      await provider.setMonthEndSavings(true);
+      messenger.showSnackBar(const SnackBar(
+          content: Text('Month-end savings on. Starts with this month.')));
+      return;
+    }
+    final hasSaved = provider.expenses.any(ExpenseProvider.isAutoSavedEntry);
+    if (!hasSaved) {
+      await provider.setMonthEndSavings(false);
+      return;
+    }
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2A2A2A),
+        title: const Text('Turn off month-end savings?',
+            style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Leftover money won\'t go into "Saved" any more. What about the Saved entries already made?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'remove'),
+            child: const Text('Remove them',
+                style: TextStyle(color: Colors.redAccent)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, 'keep'),
+            child: const Text('Keep them'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null) return;
+    await provider.setMonthEndSavings(false, removeExisting: choice == 'remove');
+    messenger.showSnackBar(SnackBar(
+      content: Text(choice == 'remove'
+          ? 'Month-end savings off · Saved entries removed'
+          : 'Month-end savings off'),
+    ));
+  }
+
+  /// Asks how far back to import bank SMS. Returns the start date, or null.
+  Future<DateTime?> _pickImportStart() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final primary = Theme.of(context).colorScheme.primary;
+    final options = <(String, IconData, DateTime)>[
+      ('Last 7 days', Icons.date_range_rounded,
+          today.subtract(const Duration(days: 6))),
+      ('Last 30 days', Icons.calendar_view_month_rounded,
+          today.subtract(const Duration(days: 29))),
+      ('Last 3 months', Icons.history_rounded,
+          DateTime(now.year, now.month - 3, now.day)),
+    ];
+    final choice = await showModalBottomSheet<Object>(
+      context: context,
+      backgroundColor: const Color(0xFF121212),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Import bank SMS from',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                    'Payments already in your list are skipped, so importing again is safe.',
+                    style: TextStyle(color: Colors.grey, fontSize: 12)),
+              ),
+            ),
+            for (final (label, icon, since) in options)
+              ListTile(
+                leading: Icon(icon, color: primary),
+                title: Text(label, style: const TextStyle(color: Colors.white)),
+                onTap: () => Navigator.pop(context, since),
+              ),
+            ListTile(
+              leading: Icon(Icons.edit_calendar_rounded, color: primary),
+              title: const Text('From a date…',
+                  style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.pop(context, 'custom'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (choice is DateTime) return choice;
+    if (choice == 'custom' && mounted) {
+      return showDatePicker(
+        context: context,
+        initialDate: today.subtract(const Duration(days: 29)),
+        firstDate: DateTime(now.year - 5),
+        lastDate: today,
+        helpText: 'Import SMS received since',
+      );
+    }
+    return null;
   }
 
   /// Deletes a bank account. If transactions (or recurring entries) use it,
@@ -2106,4 +2467,48 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
       ],
     );
   }
+}
+
+/// Icons offered when creating a category, grouped. Emoji are used as the
+/// category icon everywhere (cards, charts, pickers), so any emoji works.
+const Map<String, List<String>> _categoryEmojiGroups = {
+  'Popular': ['📦', '🍽️', '🛒', '🚗', '🏠', '💡', '🎬', '🏥', '📚', '💳', '🎁', '✈️', '👕', '📱', '💰', '🎯'],
+  'Food': ['🍔', '🍕', '🍛', '🍜', '🍣', '🥗', '🍩', '☕', '🍵', '🧃', '🍺', '🍷', '🥛', '🍎', '🥦', '🧁'],
+  'Travel': ['🚗', '🛵', '🚕', '🚌', '🚇', '🚆', '✈️', '⛽', '🅿️', '🚲', '🛺', '🗺️', '🏨', '🧳', '⛱️', '🚢'],
+  'Home': ['🏠', '🛋️', '🧹', '🧺', '🔌', '💡', '🚿', '🔧', '🪴', '🐶', '🐱', '👶', '🧸', '🛏️', '📦', '🔑'],
+  'Health': ['🏋️', '💪', '🧘', '🏃', '🚴', '⚽', '🏏', '🏸', '🏊', '💊', '🏥', '🩺', '🦷', '👓', '💆', '🧴'],
+  'Fun': ['🎬', '🎮', '🎵', '🎧', '🎤', '🎨', '📷', '🎟️', '🎳', '🎲', '📺', '🍿', '🎉', '🎂', '🎁', '🏖️'],
+  'Work & study': ['💼', '💻', '🖥️', '📚', '✏️', '🎓', '🏫', '📝', '📎', '🖨️', '📡', '☁️', '📞', '🧾', '🗂️', '⌨️'],
+  'Money': ['💰', '💳', '🏦', '💵', '🪙', '📈', '📉', '🧾', '💸', '🤝', '🏧', '🛡️', '📊', '🎗️', '🙏', '⭐'],
+  'Shopping': ['🛒', '🛍️', '👕', '👗', '👟', '👜', '💄', '💍', '⌚', '🕶️', '🧢', '📱', '🎧', '🧴', '🪒', '🧦'],
+};
+
+/// Category colours, picked to stay distinct from each other on black.
+const List<Color> _categoryColors = [
+  Color(0xFFEF5350), // red
+  Color(0xFFFF7043), // deep orange
+  Color(0xFFFFA726), // orange
+  Color(0xFFFFD54F), // yellow
+  Color(0xFFC0CA33), // lime
+  Color(0xFF66BB6A), // green
+  Color(0xFF26A69A), // teal
+  Color(0xFF26C6DA), // cyan
+  Color(0xFF42A5F5), // blue
+  Color(0xFF5C6BC0), // indigo
+  Color(0xFF9575CD), // lavender
+  Color(0xFFBA68C8), // purple
+  Color(0xFFF06292), // pink
+  Color(0xFFA1887F), // brown
+  Color(0xFF90A4AE), // blue grey
+  Color(0xFFE0E0E0), // silver
+];
+
+/// The last emoji/symbol typed, or null for plain letters, digits or spaces
+/// (those wouldn't look like an icon).
+String? _singleEmoji(String input) {
+  final chars = input.characters.where((c) => c.trim().isNotEmpty).toList();
+  if (chars.isEmpty) return null;
+  final last = chars.last;
+  if (RegExp(r'^[A-Za-z0-9\p{P}]+$', unicode: true).hasMatch(last)) return null;
+  return last;
 }

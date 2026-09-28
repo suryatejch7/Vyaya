@@ -99,12 +99,20 @@ class VyayaCapture {
     await _call<void>('markConsumed', {'ids': ids});
   }
 
+  /// Deletes captures from the native queue entirely, so importing the same
+  /// SMS again brings them back.
+  static Future<void> forget(List<int> ids) async {
+    if (ids.isEmpty) return;
+    await _call<void>('forget', {'ids': ids});
+  }
+
   static Future<int> pendingCount() async =>
       await _call<int>('pendingCount') ?? 0;
 
-  /// Imports bank SMS received since [since] into the queue. Returns how many
-  /// transaction-like messages were queued.
-  static Future<int> backfillSms(DateTime since, {int limit = 1000}) async =>
+  /// Imports bank SMS received since [since] into the queue. Every message in
+  /// that window is checked; [limit] caps how many payment-like ones are
+  /// queued. Returns how many were newly queued.
+  static Future<int> backfillSms(DateTime since, {int limit = 5000}) async =>
       await _call<int>('backfillSms', {
         'sinceMillis': since.millisecondsSinceEpoch,
         'limit': limit,

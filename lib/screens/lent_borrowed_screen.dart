@@ -222,6 +222,94 @@ class _DebtTile extends StatelessWidget {
   final DebtEntry entry;
   const _DebtTile({required this.entry});
 
+  /// Settling asks whether to log the money that changed hands.
+  Future<void> _settle(BuildContext context, ExpenseProvider provider) async {
+    final currency = provider.currency;
+    final amount = '$currency${entry.amount.toStringAsFixed(0)}';
+    final primary = Theme.of(context).colorScheme.primary;
+    final choice = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: const Color(0xFF121212),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  entry.isLent
+                      ? '${entry.person} paid you back $amount?'
+                      : 'You paid ${entry.person} back $amount?',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+            ListTile(
+              leading: Icon(
+                  entry.isLent
+                      ? Icons.arrow_downward_rounded
+                      : Icons.arrow_upward_rounded,
+                  color: primary),
+              title: Text(
+                  entry.isLent
+                      ? 'Settle and add $amount as income'
+                      : 'Settle and add $amount as an expense',
+                  style: const TextStyle(color: Colors.white)),
+              subtitle: const Text('Logged today on your default account',
+                  style: TextStyle(color: Colors.grey, fontSize: 12)),
+              onTap: () => Navigator.pop(context, true),
+            ),
+            ListTile(
+              leading: const Icon(Icons.check_circle_outline,
+                  color: Colors.white70),
+              title: const Text('Just mark as settled',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Already logged it, or it was not money',
+                  style: TextStyle(color: Colors.grey, fontSize: 12)),
+              onTap: () => Navigator.pop(context, false),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (choice == null) return;
+    await provider.setDebtSettled(entry.id, true, record: choice);
+    showUndo(
+      choice
+          ? 'Settled · ${entry.isLent ? 'income' : 'expense'} added'
+          : 'Marked as settled',
+      () => provider.setDebtSettled(entry.id, false),
+    );
+  }
+
+  Future<void> _reopen(BuildContext context, ExpenseProvider provider) async {
+    await provider.setDebtSettled(entry.id, false);
+    showUndo(
+      entry.settlementEntryId != null
+          ? 'Reopened · recorded ${entry.isLent ? 'income' : 'expense'} removed'
+          : 'Reopened',
+      () => provider.setDebtSettled(entry.id, true,
+          record: entry.settlementEntryId != null),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.read<ExpenseProvider>();
@@ -303,8 +391,9 @@ class _DebtTile extends StatelessWidget {
                         : Icons.radio_button_unchecked,
                     color: entry.settled ? Colors.green : Colors.grey,
                   ),
-                  onPressed: () =>
-                      provider.setDebtSettled(entry.id, !entry.settled),
+                  onPressed: () => entry.settled
+                      ? _reopen(context, provider)
+                      : _settle(context, provider),
                 ),
                 PopupMenuButton<String>(
                   icon:
@@ -416,6 +505,7 @@ class _DebtFormSheetState extends State<DebtFormSheet> {
         note: note,
         settled: e.settled,
         settledAt: e.settledAt,
+        settlementEntryId: e.settlementEntryId,
       ));
     }
     navigator.pop();

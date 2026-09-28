@@ -7,7 +7,9 @@ import 'undo_snackbar.dart';
 import '../screens/search_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/analytics_screen.dart';
-import '../screens/recurring_screen.dart';
+import 'package:provider/provider.dart';
+import '../providers/capture_provider.dart';
+import '../screens/detected_payments_screen.dart';
 import '../screens/lent_borrowed_screen.dart';
 
 class GlassNavBar extends StatefulWidget {
@@ -147,17 +149,24 @@ class _GlassNavBarState extends State<GlassNavBar>
           );
         },
       ),
+      // Recurring lives in Settings; detected payments are reviewed often,
+      // so they get the shortcut.
       QuickActionItem(
-        id: 'recurring',
-        icon: Icons.repeat,
-        title: 'Recurring',
-        subtitle: 'Monthly income & bills',
+        id: 'detected',
+        icon: Icons.bolt_rounded,
+        title: 'Detected Payments',
+        subtitle: switch (context.read<CaptureProvider>().pendingCount) {
+          0 => 'From bank SMS & payment apps',
+          1 => '1 waiting for review',
+          final n => '$n waiting for review',
+        },
         color: Colors.teal,
         onTap: () {
           Navigator.pop(context);
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => const RecurringScreen()),
+            MaterialPageRoute(
+                builder: (context) => const DetectedPaymentsScreen()),
           );
         },
       ),
@@ -241,8 +250,8 @@ class _GlassNavBarState extends State<GlassNavBar>
               scale: _scaleAnimation.value * 0.9, // Scale down the nav bar
               child: GestureDetector(
                 onHorizontalDragEnd: _handleHorizontalSwipe,
-                // Swipe up anywhere on the bar -> Analytics / Recurring /
-                // Lent & Borrowed / Settings sheet.
+                // Swipe up anywhere on the bar -> Analytics / Detected
+                // Payments / Lent & Borrowed / Settings sheet.
                 onVerticalDragEnd: (details) {
                   if (widget.isSelectionMode) return;
                   final v = details.primaryVelocity;

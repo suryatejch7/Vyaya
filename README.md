@@ -19,11 +19,12 @@ It's built around a simple idea: **you log the money that comes in, you log the 
 ### Auto-detecting payments
 You can have payments logged without typing anything. Vyaya can read two things:
 - **Payment app notifications** from PhonePe, Google Pay, Paytm, BHIM, CRED, Amazon Pay, Navi, MobiKwik and Freecharge ("₹120 paid to Swiggy").
-- **Bank SMS**, meaning the debit and credit alerts your bank already sends. It can also import the last 30 days in one go.
+- **Bank SMS**, meaning the debit and credit alerts your bank already sends. It can also import past messages (last 7 days, 30 days, 3 months or from a date you pick).
 
-Each message is read on your phone and turned into amount, payee, date and account. It also gets a category (Swiggy → Food, Uber → Transport, and so on), and when you correct a payee's category once, it remembers.
+Each message is read on your phone and turned into amount, payee, date and account. It also gets a category (Swiggy → Food, Uber → Transport, and so on), and when you correct a payee's category once (on the review screen or later by editing the expense), it remembers. Payments are matched to your bank accounts too; a missing bank is created for you, and you can rename accounts (for example add the last 4 digits) in **Settings → Bank Accounts**.
 
 - **Ask me** (default): new payments land in a review list with Add / Edit / Dismiss, and a banner on the home screen tells you when there's something to look at.
+- **Reviewing a long list:** search, filter by date or paid/received, swipe right to add or left to dismiss, long-press to select several, "Always ignore" a payee or sender from a card's ⋮ menu, and remove payments from the list entirely (for example after importing more than you wanted). Everything can be undone.
 - **Add automatically**: payments it's confident about go straight in. Anything unclear still waits for you. That includes no payee, a transfer between your own accounts, a credit card bill payment, a reversal, a message with a link, or imported history. **Add all** on the review list also leaves transfers and card bill payments for you to decide.
 
 It's careful about the common traps:
@@ -43,15 +44,16 @@ Set it up in **Settings → Auto-detect Payments**. If Android greys out the Not
 - **Analytics:** spending only (month-end "Saved" entries aren't counted as spending). Day, week, month or year views with a category pie chart, spending trend, month-by-month comparison and a few plain-English insights. For example: "Food is your highest spending category this month".
 
 ### Things that happen on their own
-- **Recurring entries:** set up things that repeat every month once, like pocket money on the 1st or Spotify on the 5th, and Vyaya logs them automatically when their day comes. You can pause, edit or delete them anytime. If you don't open the app for a while, it catches up with anything you missed.
-- **Month-end savings:** when a month ends with money left over, that leftover is logged into a **"Saved"** category on the last day of the month. The category is created for you if it doesn't exist. It also keeps itself up to date: log a forgotten expense from last month and last month's Saved amount adjusts on its own. Over time, this shows you how much you've actually saved each month.
+- **Recurring entries:** set up things that repeat weekly, monthly or yearly once, like pocket money on the 1st, a Sunday grocery run or a yearly insurance premium, and Vyaya logs them automatically when their day comes. You can pause, edit or delete them anytime. If you don't open the app for a while, it catches up with anything you missed.
+- **Month-end savings:** when a month ends with money left over, that leftover is logged into a **"Saved"** category on the last day of the month. The category is created for you if it doesn't exist. It also keeps itself up to date: log a forgotten expense from last month and last month's Saved amount adjusts on its own. Over time, this shows you how much you've actually saved each month. Don't want one? Delete it and that month stays empty, or turn the whole thing off in **Settings → Month-end savings**.
 - **Notifications:** you get a heads-up when your spending passes your income for the month, or when a category goes over the limit you set for it. They can be turned off in Settings.
 
 ### Money with friends
-- **Lent & Borrowed:** keep track of "I paid for dinner, Rahul owes me ₹300" or "Borrowed ₹500 from Priya". You see a running balance per person, "You'll get" and "You owe" totals, and you tick entries off as they're settled. None of it counts towards your spending.
+- **Lent & Borrowed:** keep track of "I paid for dinner, Rahul owes me ₹300" or "Borrowed ₹500 from Priya". You see a running balance per person, "You'll get" and "You owe" totals, and you tick entries off as they're settled. When you settle one, you can also log the money that changed hands (income when they pay you back, an expense when you pay them); reopening it removes that entry again. Open entries don't count towards your spending.
 
 ### Categories
-- It comes with 8 default categories: Food, Transport, Shopping, Entertainment, Health, Bills, Education and Other. You can add your own with an emoji and a colour.
+- It comes with 8 default categories: Food, Transport, Shopping, Entertainment, Health, Bills, Education and Other. You can add your own: pick from grouped icons (or type any emoji) and one of 16 colours.
+- **Tap a category to edit it:** name, icon, colour and monthly limit. Renaming moves every expense, recurring entry and detected payment to the new name. "Other" and "Saved" keep their names because the app relies on them.
 - **Every category is deletable, defaults included.** Long-press to select several at once.
 - If a category you're deleting already has expenses in it, Vyaya warns you and lets you **move those expenses to another category** first, or keep them as they are. Any you keep then show up under "Other".
 - **Optional per-category monthly limits,** with a warning when you cross one.
@@ -73,12 +75,13 @@ Some features are hidden behind gestures, so here's the cheat sheet:
 |---|---|---|
 | Nav bar | Tap **Home** / **Categories** | Switch tabs (you can also swipe sideways on the bar) |
 | Nav bar | Tap **Search** | Search through your expenses |
-| Nav bar | **Swipe up** (or long-press Search) | Opens **Analytics, Recurring, Lent & Borrowed, Settings** |
+| Nav bar | **Swipe up** (or long-press Search) | Opens **Analytics, Detected Payments, Lent & Borrowed, Settings** (Recurring is in Settings) |
 | Home | Tap **+** | Add expense or add income |
 | Home | Tap the "payments detected" banner | Review auto-detected payments |
 | Home | ◀ ▶ next to the month | Look at previous months |
 | Home | Tap "Recent Activity" | Switch to the credit card view |
 | Any entry | Tap / ⋮ menu / long-press | Edit / delete (with undo) / select several |
+| Settings → Categories | Tap a category | Edit its name, icon, colour and limit |
 | Settings → Categories | Long-press a category | Select several to delete |
 
 The little line on top of the nav bar is there to remind you that it swipes up.
@@ -165,7 +168,7 @@ lib/
 
 - Auto-detection understands the common Indian bank and UPI formats. A message it can't fully read still shows up for review with the original text, rather than being dropped.
 - Automatic entries (recurring and month-end savings) are created when you open or return to the app, not in the background. If you don't open it on the 1st, they appear the next time you do, with the correct dates.
-- The "Saved from …" entries are managed by the app. If you delete or edit one by hand, it goes back to the correct amount, so change that month's real entries instead.
+- The "Saved from …" amounts are managed by the app: edit one by hand and it goes back to that month's real leftover, so change that month's entries instead. Deleting one is respected (that month stays without it).
 - It's Android only, and rupees only.
 
 ## What's next
