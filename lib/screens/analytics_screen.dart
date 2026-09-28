@@ -28,11 +28,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   final List<String> _periods = ['Day', 'Week', 'Month', 'Year'];
   String? _selectedAccountId; // null means all accounts
 
-  @override
-  void initState() {
-    super.initState();
-  }
-
   /// Spending only: the automatic month-end "Saved" entries are money kept,
   /// not spent, so they'd otherwise make every past month's spending equal
   /// its income.
@@ -1024,30 +1019,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     }
     return totals;
   }
-
-  /// Get filtered expenses for the selected period and account
-  List<Expense> _getExpensesForPeriod(ExpenseProvider provider) {
-    final now = DateTime.now();
-    final baseExpenses = _getFilteredExpenses(provider);
-    return baseExpenses.where((expense) {
-      switch (_selectedPeriod) {
-        case 'Day':
-          return expense.date.year == now.year &&
-              expense.date.month == now.month &&
-              expense.date.day == now.day;
-        case 'Week':
-          // Calendar week (Sun–Sat, or Mon–Sun if chosen).
-          return _inWeek(expense.date, _weekStartOf(now));
-        case 'Month':
-          return expense.date.year == now.year &&
-              expense.date.month == now.month;
-        case 'Year':
-          return expense.date.year == now.year;
-        default:
-          return false;
-      }
-    }).toList();
-  }
 }
 
 // Custom Painters for Charts
@@ -1113,7 +1084,7 @@ class SpendingTrendPainter extends CustomPainter {
 
       // Draw horizontal grid line
       final gridPaint = Paint()
-        ..color = Colors.grey.withOpacity(0.1)
+        ..color = Colors.grey.withValues(alpha: 0.1)
         ..strokeWidth = 0.5;
       canvas.drawLine(
         Offset(leftPadding, y),
@@ -1145,8 +1116,8 @@ class SpendingTrendPainter extends CustomPainter {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            const Color(0xFF00D4FF).withOpacity(0.3),
-            const Color(0xFF00D4FF).withOpacity(0.0),
+            const Color(0xFF00D4FF).withValues(alpha: 0.3),
+            const Color(0xFF00D4FF).withValues(alpha: 0.0),
           ],
         ).createShader(Rect.fromLTWH(leftPadding, 0, chartWidth, chartHeight + 5));
       canvas.drawPath(fillPath, fillPaint);
