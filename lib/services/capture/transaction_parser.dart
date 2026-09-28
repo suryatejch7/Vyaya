@@ -58,7 +58,7 @@ class TransactionParser {
   static final _otp = _ci(
       r"\b(otp|one[\s-]?time\s*password|verification\s*code|security\s*code|do\s*not\s*share|don'?t\s*share)\b");
   static final _promo = _ci(
-      r"\b(pre[\s-]?approved|pre[\s-]?qualified|apply\s*now|avail\s*now|claim\s*now|click\s*(here|link|to)|congratulations|good\s*news|hurry|limited\s*(period\s*)?offer|offer\s*valid|lucky\s*draw|coupon|voucher|flat\s*\d+\s*%|\d+\s*%\s*off|cashback\s*(upto|up\s*to|of\s*up\s*to|worth|waiting)|reward\s*points\s*worth|eligible\s*for|instant\s*(personal\s*)?loan|loan\s*(of|upto|up\s*to)|limit\s*(has\s*been\s*)?enhanced|enhanced\s*to|upgrade|get\s*(₹|rs\.?|inr)\s*\d+|on\s*your\s*(first|next)\b)");
+      r"\b(use\s*(?:the\s*)?(?:promo\s*|coupon\s*)?code|promo\s*code|coupon\s*code|pay\s*(?:now|instantly|today)\s*[:\-]|valid\s*for\s*(?:a\s*)?limited|get\s+(?:assured\s+)?(?:up\s*to|upto|flat|extra)\s*(?:₹|rs\.?|inr)|(?:up\s*to|upto)\s*(?:₹|rs\.?|inr)\s*[\d,]+\s*(?:cashback|off|discount|reward)|pre[\s-]?approved|pre[\s-]?qualified|apply\s*now|avail\s*now|claim\s*now|click\s*(here|link|to)|congratulations|good\s*news|hurry|limited\s*(period\s*)?offer|offer\s*valid|lucky\s*draw|coupon|voucher|flat\s*\d+\s*%|\d+\s*%\s*off|cashback\s*(upto|up\s*to|of\s*up\s*to|worth|waiting)|reward\s*points\s*worth|eligible\s*for|instant\s*(personal\s*)?loan|loan\s*(of|upto|up\s*to)|limit\s*(has\s*been\s*)?enhanced|enhanced\s*to|upgrade|get\s*(₹|rs\.?|inr)\s*\d+|on\s*your\s*(first|next)\b)");
   static final _scam = _ci(
       r"\b(kyc|lottery|kbc|won\s*(rs|₹)|claim\s*your|registration\s*fee|processing\s*fee|tax\s*fee|activation\s*fee|clearance\s*fee|security\s*deposit|to\s*release\s*funds|to\s*receive\s*(the\s*)?money|approve\s*the\s*transfer|verify\s*your\s*bank|confirm\s*bank\s*details|update\s*(your\s*)?bank|upi\s*pin|work\s*(from\s*home|part[\s-]?time)|apk|\.exe|whatsapp|police|defaulter|blackmail|recorded\s*your|hacked|freeze\s*your|scratch\s*card)\b");
   static final _failed = _ci(
@@ -142,7 +142,8 @@ class TransactionParser {
       r"\s+(com|pvt\.?|private|ltd\.?|limited|llp|inc\.?|india|technologies|tech|solutions|services|retail|payments)(\s+(pvt\.?|private|ltd\.?|limited|india))*\s*$");
 
   // ---------------- flags ----------------
-  static final _link = _ci(r"https?:\/\/|www\.|bit\.ly");
+  static final _link = _ci(
+      r"https?:\/\/|www\.|bit\.ly|\b(?:[a-z0-9-]+\.)+[a-z]{2,}\/[\w\-.\/?=&%]+");
   static final _reversal = _ci(r"\b(revers(ed|al))\b");
   static final _debitedWord = _ci(r"\bdebited\b");
   static final _creditedWord = _ci(r"\bcredited\b");

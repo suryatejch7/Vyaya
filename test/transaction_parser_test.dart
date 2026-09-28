@@ -195,4 +195,12 @@ void main() {
   test('#159 card at Big Bazaar', () => _accept('Thank you for using your HDFC Debit Card XX1234 for Rs 540 at Big Bazaar on 12-09-26', 540.0, true, 'Big Bazaar'));
   test('#160 dining', () => _accept('Thanks for dining at Barbeque Nation. Rs 2,400 paid by card XX9911.', 2400.0, true, 'Barbeque Nation'));
   test('#161 choosing', () => _accept('Thank you for choosing Croma. Rs 15,999 debited from A/c XX1234.', 15999.0, true, 'Croma'));
+  // Cashback / promo-code offers are ads, not money received.
+  test('#162 MobiKwik offer', () => _reject('Make your credit card bill payment today and get up to Rs.200 cashback with MobiKwik! Use Code: FULLPAY. Pay instantly: ct3.io/chSjv -MobiKwik'));
+  test('#163 MobiKwik assured', () => _reject('Get assured upto Rs.50 cashback on credit card bill payment today. Use code: SALARYDAYS. Valid for limited time. Pay Now: ct3.io/2b5X3x -MobiKwik'));
+  test('#164 recharge offer', () => _reject('Flat Rs.100 off on your next recharge. Use code RECH100. Pay now: amzn.to/x'));
+  test('#165 bill offer', () => _reject('Get upto Rs 75 cashback on electricity bill payment. Offer valid till 30 Sep. Pay now: phon.pe/x'));
+  test('#166 real cashback kept', () => _accept('Rs 50 cashback credited to your Paytm wallet for your recent payment.', 50.0, false, null));
+  test('#167 validity is not a promo', () => _accept('Paid Rs.299 to Jio. Validity up to 28 days.', 299.0, true, 'Jio'));
+  test('#168 bare link flagged', () => _accept('Dear Customer, Rs 1,200 debited from A/c XX1234 at AMAZON. Not you? visit hdfcbank.com/fraud', 1200.0, true, 'Amazon', flag: 'link'));
 }
