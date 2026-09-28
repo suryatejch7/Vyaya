@@ -6,22 +6,27 @@ import 'providers/user_provider.dart';
 import 'providers/capture_provider.dart';
 import 'screens/main_screen.dart';
 import 'services/local_store.dart';
+import 'services/app_prefs.dart';
 import 'services/backup_service.dart';
 import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/undo_bar.dart';
+import 'widgets/app_lock.dart';
+import 'services/smart_notifications.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // On-device storage (SharedPreferences)
   await LocalStore.initialize();
+  await AppPrefs.instance.init();
 
   // Restore from auto-backup file if SharedPreferences was wiped
   await BackupService.restoreFromAutoBackupIfNeeded();
 
   // Initialize Notifications
   await NotificationService.initialize();
+  await NotificationService.syncDailyReminder(AppPrefs.instance.reminderMinutes);
 
   runApp(const MyApp());
 }
@@ -41,9 +46,10 @@ class MyApp extends StatelessWidget {
         title: 'Vyaya',
         theme: AppTheme.darkTheme,
         home: const AppBootstrap(),
+        navigatorKey: appNavigatorKey,
         debugShowCheckedModeBanner: false,
         builder: (context, child) =>
-            _SystemNavBarGuard(child: UndoHost(child: child!)),
+            _SystemNavBarGuard(child: LockGate(child: UndoHost(child: child!))),
       ),
     );
   }
@@ -91,6 +97,8 @@ class _AppBootstrapState extends State<AppBootstrap> {
       await userProvider.initializeExpenseProvider(expenseProvider);
       // Payment auto-detection: drain anything captured while closed.
       await captureProvider.attach(expenseProvider);
+      // Weekly summary / monthly recap / bill reminders stay up to date.
+      SmartNotifications.attach(expenseProvider);
     }
 
     if (mounted) {

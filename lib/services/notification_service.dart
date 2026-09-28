@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
+import 'app_prefs.dart';
 
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
@@ -13,6 +17,11 @@ class NotificationService {
     if (_isInitialized) return;
 
     _prefs = await SharedPreferences.getInstance();
+
+    // Scheduled notifications (daily reminder) need a time zone. Vyaya is
+    // India-only, so IST is fixed rather than detected.
+    tzdata.initializeTimeZones();
+    tz.setLocalLocation(tz.getLocation('Asia/Kolkata'));
 
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -43,6 +52,108 @@ class NotificationService {
     await _prefs?.setBool('notifications_enabled', enabled);
     if (!enabled) {
       await _notificationsPlugin.cancelAll();
+      // The daily reminder and scheduled summaries have their own
+      // switches; put them back.
+      await syncDailyReminder(AppPrefs.instance.reminderMinutes);
+      await onScheduledCleared?.call();
+    }
+  }
+
+  // ==================== SCHEDULED (summaries, bills) ====================
+
+  /// Schedules one notification at [at] (IST), replacing any with [id].
+  /// [repeat] makes it recur (e.g. weekly on that weekday and time).
+  /// Past times are skipped. Inexact, so it may arrive a few minutes late.
+  static Future<void> scheduleAt(
+    int id,
+    String title,
+    String body,
+    DateTime at, {
+    required String channelId,
+    required String channelName,
+    DateTimeComponents? repeat,
+  }) async {
+    try {
+      // No cancel first: zonedSchedule with the same id replaces a pending
+      // one, and cancel() would also clear one already in the tray.
+      final when = tz.TZDateTime(
+          tz.local, at.year, at.month, at.day, at.hour, at.minute);
+      if (!when.isAfter(tz.TZDateTime.now(tz.local))) return;
+      await _notificationsPlugin.zonedSchedule(
+        id,
+        title,
+        body,
+        when,
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            channelId,
+            channelName,
+            icon: '@mipmap/ic_launcher',
+            styleInformation: BigTextStyleInformation(body),
+          ),
+        ),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: repeat,
+      );
+    } catch (e) {
+      debugPrint('Scheduling $id failed: $e');
+    }
+  }
+
+  /// Ids of notifications scheduled but not yet shown.
+  static Future<Set<int>> pendingIds() async {
+    try {
+      final list = await _notificationsPlugin.pendingNotificationRequests();
+      return list.map((r) => r.id).toSet();
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Optional early warning: 80% of a limit or of this month's income.
+  static Future<void> showNearLimit(String title, String body) =>
+      _showNotification(title, body);
+
+  // ==================== DAILY REMINDER ====================
+
+  static const int _reminderId = 7001;
+
+  /// Set by SmartNotifications to re-schedule summaries after a cancelAll.
+  static Future<void> Function()? onScheduledCleared;
+
+  /// Schedules (or cancels, when [minutes] is null) the daily "log your
+  /// spending" reminder at [minutes] after midnight. Inexact, so Android
+  /// may deliver it a few minutes late to save battery.
+  static Future<void> syncDailyReminder(int? minutes) async {
+    try {
+      await _notificationsPlugin.cancel(_reminderId);
+      if (minutes == null) return;
+      final now = tz.TZDateTime.now(tz.local);
+      var at = tz.TZDateTime(
+          tz.local, now.year, now.month, now.day, minutes ~/ 60, minutes % 60);
+      if (!at.isAfter(now)) at = at.add(const Duration(days: 1));
+      await _notificationsPlugin.zonedSchedule(
+        _reminderId,
+        'Log today\'s spending',
+        'Paid for anything Vyaya didn\'t catch? Add it before you forget.',
+        at,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'daily_reminder',
+            'Daily reminder',
+            channelDescription: 'A daily nudge to log your expenses',
+            icon: '@mipmap/ic_launcher',
+          ),
+        ),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.time,
+      );
+    } catch (e) {
+      debugPrint('Daily reminder scheduling failed: $e');
     }
   }
 
@@ -63,6 +174,26 @@ class NotificationService {
         importance: Importance.high,
       );
     }
+  }
+
+  /// Optional feature: a single expense at or above your chosen amount.
+  static Future<void> showLargePayment(String payee, double amount) async {
+    final id = 50000 + DateTime.now().millisecondsSinceEpoch % 40000;
+    await _notificationsPlugin.show(
+      id,
+      'Large payment: ₹${amount.toStringAsFixed(0)}',
+      payee.isEmpty ? 'Logged just now' : 'To $payee · logged just now',
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'large_payments',
+          'Large payments',
+          channelDescription: 'Alerts for single payments above your limit',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+        ),
+      ),
+    );
   }
 
   static Future<void> checkCategoryBudgetExceeded(

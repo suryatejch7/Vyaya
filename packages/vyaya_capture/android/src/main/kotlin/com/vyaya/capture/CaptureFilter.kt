@@ -23,7 +23,7 @@ object CaptureFilter {
     private val AMOUNT = Regex("""(?:rs[.:]?|inr|₹)\s*[0-9]""", RegexOption.IGNORE_CASE)
     private val AMOUNT_BARE = Regex("""\b(?:debited|credited)\s+(?:by|for|with)\s+[0-9]""", RegexOption.IGNORE_CASE)
     private val MOVEMENT = Regex(
-        """\b(debited|debit|credited|credit|spent|paid|withdrawn|purchase|deducted|sent|transferred|received|refund|refunded|deposited|txn|transaction|reversed|dr|cr)\b""",
+        """\b(debited|debit|credited|credit|spent|paid|withdrawn|purchase|deducted|sent|transferred|received|refund|refunded|deposited|txn|transaction|reversed|dr|cr|recharge|recharged)\b""",
         RegexOption.IGNORE_CASE
     )
     private val OTP = Regex("""\b(otp|one[\s-]?time\s*password|verification\s*code)\b""", RegexOption.IGNORE_CASE)

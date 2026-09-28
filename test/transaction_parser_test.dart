@@ -203,4 +203,10 @@ void main() {
   test('#166 real cashback kept', () => _accept('Rs 50 cashback credited to your Paytm wallet for your recent payment.', 50.0, false, null));
   test('#167 validity is not a promo', () => _accept('Paid Rs.299 to Jio. Validity up to 28 days.', 299.0, true, 'Jio'));
   test('#168 bare link flagged', () => _accept('Dear Customer, Rs 1,200 debited from A/c XX1234 at AMAZON. Not you? visit hdfcbank.com/fraud', 1200.0, true, 'Amazon', flag: 'link'));
+  // Successful mobile / DTH recharges.
+  test('#169 recharge, no operator', () => _accept('Recharge of Rs 299 for 98XXXXXX12 successful via PhonePe. Plan valid till 12 Oct 2026.', 299.0, true, 'Mobile recharge'));
+  test('#170 Jio recharged', () => _accept('Your Jio number 98XXXXXX12 has been successfully recharged with Rs 239. Validity 28 days.', 239.0, true, 'Jio'));
+  test('#171 Airtel recharge', () => _accept('Recharge of ₹199 for Airtel 9876XXXX21 is successful. Txn ID 1234567890', 199.0, true, 'Airtel'));
+  test('#172 recharge ad', () => _reject('Recharge now and get Rs 50 cashback. Recharge done in seconds!'));
+  test('#173 failed recharge', () => _reject('Recharge failed for Rs 299. Amount will be refunded.'));
 }

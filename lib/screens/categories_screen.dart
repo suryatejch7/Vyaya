@@ -1,4 +1,7 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'savings_screen.dart';
+import '../services/app_prefs.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../models/expense_models.dart';
@@ -53,6 +56,8 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
+      // Keeps the sheet's top below the status bar / camera cutout.
+      useSafeArea: true,
       builder: (context) => _FilterBottomSheet(
         currentPeriod: _selectedPeriod,
         customStartDate: _customStartDate,
@@ -71,38 +76,28 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
     );
   }
 
+  /// Anything other than "this month, all accounts".
+  bool get _isFiltered =>
+      _selectedPeriod != FilterPeriod.monthly || _selectedAccountId != null;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Categories'),
-        actions: [
-          // Filter chip showing current selection
-          Consumer<ExpenseProvider>(
-            builder: (context, provider, child) {
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ActionChip(
-                  avatar: const Icon(Icons.filter_list, size: 18),
-                  label: Text(
-                    _getFilterSummary(provider),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  onPressed: _showFilterSheet,
-                  backgroundColor: Theme.of(
-                    context,
-                  ).colorScheme.primary.withValues(alpha: 0.2),
-                  labelStyle: TextStyle(
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              );
-            },
-          ),
-        ],
       ),
-      body: Consumer<ExpenseProvider>(
+      // Filter lives on the nav bar's row at the right, in the spot the
+      // + button takes on Home.
+      floatingActionButton: _FilterButton(
+        active: _isFiltered,
+        onPressed: _showFilterSheet,
+      ),
+      floatingActionButtonLocation: const _NavRowLocation(),
+      floatingActionButtonAnimator: FloatingActionButtonAnimator.noAnimation,
+      // Also listens to AppPrefs: "This week" follows the week-start setting.
+      body: ListenableBuilder(
+        listenable: AppPrefs.instance,
+        builder: (context, _) => Consumer<ExpenseProvider>(
         builder: (context, expenseProvider, child) {
           final categoryTotals = expenseProvider.getCategoryTotalsByPeriod(
             _selectedPeriod,
@@ -117,11 +112,24 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
             accountId: _selectedAccountId,
           );
 
+          // Savings aren't spending: they get their own card above the
+          // categories (not per account, so hidden when filtering by one).
+          final showSavings = _selectedAccountId == null;
+
           if (categoryTotals.isEmpty) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  if (showSavings)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                      child: SavingsSummaryCard(
+                        period: _selectedPeriod,
+                        customStart: _customStartDate,
+                        customEnd: _customEndDate,
+                      ),
+                    ),
                   const Icon(
                     Icons.category_outlined,
                     size: 80,
@@ -166,27 +174,36 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _getFilterSummary(expenseProvider),
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _getFilterSummary(expenseProvider),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '₹${totalForPeriod.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).colorScheme.primary,
+                          const SizedBox(height: 4),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '₹${totalForPeriod.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 12),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
@@ -213,9 +230,19 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
               // Categories list
               Expanded(
                 child: ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: sortedCategories.length,
-                  itemBuilder: (context, index) {
+                  // Room at the bottom so the last category can scroll
+                  // above the nav bar and the filter button.
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 110),
+                  itemCount: sortedCategories.length + (showSavings ? 1 : 0),
+                  itemBuilder: (context, i) {
+                    if (showSavings && i == 0) {
+                      return SavingsSummaryCard(
+                        period: _selectedPeriod,
+                        customStart: _customStartDate,
+                        customEnd: _customEndDate,
+                      );
+                    }
+                    final index = showSavings ? i - 1 : i;
                     final entry = sortedCategories[index];
                     final categoryName = entry.key;
                     final amount = entry.value;
@@ -305,14 +332,19 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                                         children: [
                                           Row(
                                             children: [
-                                              Text(
-                                                category.displayName,
-                                                style: TextStyle(
-                                                  fontSize: 18,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: isOverBudget
-                                                      ? Colors.red
-                                                      : Colors.white,
+                                              Flexible(
+                                                child: Text(
+                                                  category.displayName,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    fontSize: 18,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: isOverBudget
+                                                        ? Colors.red
+                                                        : Colors.white,
+                                                  ),
                                                 ),
                                               ),
                                               if (isOverBudget) ...[
@@ -346,6 +378,8 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                                           const SizedBox(height: 4),
                                           Text(
                                             '₹${amount.toStringAsFixed(2)} • ${percentage.toStringAsFixed(1)}%',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                             style: const TextStyle(
                                               fontSize: 14,
                                               color: Colors.grey,
@@ -399,7 +433,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          '${expenseProvider.getExpensesByCategoryAndPeriod(categoryName, _selectedPeriod, customStart: _customStartDate, customEnd: _customEndDate).length} items',
+                                          '${expenseProvider.getExpensesByCategoryAndPeriod(categoryName, _selectedPeriod, customStart: _customStartDate, customEnd: _customEndDate, accountId: _selectedAccountId).length} items',
                                           style: const TextStyle(
                                             fontSize: 12,
                                             color: Colors.grey,
@@ -423,6 +457,92 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
             ],
           );
         },
+        ),
+      ),
+    );
+  }
+}
+
+/// Puts a 56 dp button on the nav bar's row at the right: the bar sits 30 dp
+/// up and is 63 dp tall, so its centre is 65 dp from the bottom.
+class _NavRowLocation extends FloatingActionButtonLocation {
+  const _NavRowLocation();
+
+  @override
+  Offset getOffset(ScaffoldPrelayoutGeometry g) {
+    final size = g.floatingActionButtonSize;
+    return Offset(
+      g.scaffoldSize.width - 16 - size.width,
+      g.scaffoldSize.height - 65 - size.height / 2,
+    );
+  }
+}
+
+/// Round glass button matching the nav bar. A dot shows when a filter
+/// other than "this month, all accounts" is on.
+class _FilterButton extends StatelessWidget {
+  final bool active;
+  final VoidCallback onPressed;
+  const _FilterButton({required this.active, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Tooltip(
+      message: 'Filter',
+      child: GestureDetector(
+        onTap: onPressed,
+        child: SizedBox(
+          width: 56,
+          height: 56,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              ClipOval(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.white.withValues(alpha: 0.15),
+                          Colors.white.withValues(alpha: 0.08),
+                        ],
+                      ),
+                      border: Border.all(
+                        color: active
+                            ? primary
+                            : Colors.white.withValues(alpha: 0.4),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Center(
+                      child: Icon(Icons.tune_rounded,
+                          color: active ? primary : Colors.white, size: 24),
+                    ),
+                  ),
+                ),
+              ),
+              if (active)
+                Positioned(
+                  right: 4,
+                  top: 4,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.black, width: 1.5),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -498,10 +618,68 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
     }
   }
 
+  static const _periods = [
+    (FilterPeriod.weekly, 'This week'),
+    (FilterPeriod.monthly, 'This month'),
+    (FilterPeriod.yearly, 'This year'),
+    (FilterPeriod.allTime, 'All time'),
+  ];
+
+  Widget _label(String text) => Padding(
+        padding: const EdgeInsets.only(left: 2, bottom: 8),
+        child: Text(
+          text,
+          style: TextStyle(
+            color: Colors.grey[500],
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1.1,
+          ),
+        ),
+      );
+
+  Widget _chip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    IconData? icon,
+  }) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return ChoiceChip(
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 16, color: selected ? accent : Colors.grey),
+            const SizedBox(width: 6),
+          ],
+          Text(label),
+        ],
+      ),
+      selected: selected,
+      onSelected: (_) => onTap(),
+      showCheckmark: false,
+      labelStyle: TextStyle(
+        color: selected ? accent : Colors.white70,
+        fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+      ),
+      backgroundColor: const Color(0xFF232323),
+      selectedColor: accent.withValues(alpha: 0.18),
+      side: BorderSide(
+        color: selected ? accent : Colors.grey.withValues(alpha: 0.25),
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasRange = _startDate != null && _endDate != null;
+    final isCustom = _selectedPeriod == FilterPeriod.custom;
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.fromLTRB(
+          20, 10, 20, 16 + MediaQuery.of(context).viewPadding.bottom),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: const BorderRadius.only(
@@ -524,105 +702,75 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
-            const Text(
-              'Filter by Period',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 16),
-            _buildFilterOption(
-              FilterPeriod.weekly,
-              'This Week',
-              Icons.view_week,
-            ),
-            _buildFilterOption(
-              FilterPeriod.monthly,
-              'This Month',
-              Icons.calendar_month,
-            ),
-            _buildFilterOption(
-              FilterPeriod.yearly,
-              'This Year',
-              Icons.calendar_today,
-            ),
-            _buildFilterOption(
-              FilterPeriod.allTime,
-              'All Time',
-              Icons.all_inclusive,
-            ),
-            const Divider(color: Colors.grey),
-            ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: _selectedPeriod == FilterPeriod.custom
-                      ? Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.2)
-                      : Colors.grey.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(8),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Text(
+                  'Filter',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
-                child: Icon(
-                  Icons.date_range,
-                  color: _selectedPeriod == FilterPeriod.custom
-                      ? Theme.of(context).colorScheme.primary
-                      : Colors.grey,
+                const Spacer(),
+                // Back to the default: this month, all accounts.
+                TextButton(
+                  onPressed: () => setState(() {
+                    _selectedPeriod = FilterPeriod.monthly;
+                    _selectedAccountId = null;
+                  }),
+                  child: const Text('Reset'),
                 ),
-              ),
-              title: const Text('Custom Date Range'),
-              subtitle: _startDate != null && _endDate != null
-                  ? Text(
-                      '${DateFormat('MMM d, yyyy').format(_startDate!)} - ${DateFormat('MMM d, yyyy').format(_endDate!)}',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    )
-                  : const Text('Select a date range'),
-              trailing: _selectedPeriod == FilterPeriod.custom
-                  ? Icon(
-                      Icons.check_circle,
-                      color: Theme.of(context).colorScheme.primary,
-                    )
-                  : null,
-              onTap: _selectDateRange,
+              ],
+            ),
+            const SizedBox(height: 8),
+            _label('PERIOD'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final (period, label) in _periods)
+                  _chip(
+                    label: label,
+                    selected: _selectedPeriod == period,
+                    onTap: () => setState(() => _selectedPeriod = period),
+                  ),
+                _chip(
+                  icon: Icons.date_range,
+                  label: isCustom && hasRange
+                      ? '${DateFormat('d MMM').format(_startDate!)} – ${DateFormat('d MMM').format(_endDate!)}'
+                      : 'Custom…',
+                  selected: isCustom,
+                  onTap: _selectDateRange,
+                ),
+              ],
             ),
             const SizedBox(height: 20),
-            const Text(
-              'Filter by Account',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 16),
+            _label('ACCOUNT'),
             Consumer<ExpenseProvider>(
-              builder: (context, provider, _) {
-                final accounts = provider.accounts;
-                return Column(
-                  children: [
-                    _buildAccountOption(
-                      null,
-                      'All Accounts',
-                      Icons.account_balance_wallet,
+              builder: (context, provider, _) => Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _chip(
+                    icon: Icons.account_balance_wallet_outlined,
+                    label: 'All accounts',
+                    selected: _selectedAccountId == null,
+                    onTap: () => setState(() => _selectedAccountId = null),
+                  ),
+                  for (final account in provider.accounts)
+                    _chip(
+                      icon: Icons.account_balance_outlined,
+                      label: account.name,
+                      selected: _selectedAccountId == account.id,
+                      onTap: () =>
+                          setState(() => _selectedAccountId = account.id),
                     ),
-                    ...accounts.map(
-                      (account) => _buildAccountOption(
-                        account.id,
-                        account.name,
-                        Icons.account_balance,
-                      ),
-                    ),
-                  ],
-                );
-              },
+                ],
+              ),
             ),
-            const Divider(color: Colors.grey),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -637,87 +785,20 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.primary,
                   foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
                 child: const Text(
-                  'Apply Filter',
+                  'Apply',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
             ),
-            const SizedBox(height: 20),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildAccountOption(String? accountId, String title, IconData icon) {
-    final isSelected = _selectedAccountId == accountId;
-    return ListTile(
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
-              : Colors.grey.withValues(alpha: 0.2),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(
-          icon,
-          color: isSelected
-              ? Theme.of(context).colorScheme.primary
-              : Colors.grey,
-        ),
-      ),
-      title: Text(title),
-      trailing: isSelected
-          ? Icon(
-              Icons.check_circle,
-              color: Theme.of(context).colorScheme.primary,
-            )
-          : null,
-      onTap: () {
-        setState(() {
-          _selectedAccountId = accountId;
-        });
-      },
-    );
-  }
-
-  Widget _buildFilterOption(FilterPeriod period, String title, IconData icon) {
-    final isSelected = _selectedPeriod == period;
-    return ListTile(
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
-              : Colors.grey.withValues(alpha: 0.2),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(
-          icon,
-          color: isSelected
-              ? Theme.of(context).colorScheme.primary
-              : Colors.grey,
-        ),
-      ),
-      title: Text(title),
-      trailing: isSelected
-          ? Icon(
-              Icons.check_circle,
-              color: Theme.of(context).colorScheme.primary,
-            )
-          : null,
-      onTap: () {
-        setState(() {
-          _selectedPeriod = period;
-        });
-      },
     );
   }
 }
@@ -750,6 +831,14 @@ class CategoryDetailScreen extends StatelessWidget {
         return 'All Time';
       case FilterPeriod.custom:
         if (customStartDate != null && customEndDate != null) {
+          final s = customStartDate!, e = customEndDate!;
+          // A whole calendar month (opened from Home) reads "August 2026".
+          if (s.day == 1 &&
+              e.year == s.year &&
+              e.month == s.month &&
+              e.day == DateTime(s.year, s.month + 1, 0).day) {
+            return DateFormat('MMMM yyyy').format(s);
+          }
           final format = DateFormat('MMM d');
           return '${format.format(customStartDate!)} - ${format.format(customEndDate!)}';
         }

@@ -446,6 +446,8 @@ class _DebtFormSheetState extends State<DebtFormSheet> {
   bool _isLent = true;
   DateTime _date = DateTime.now();
 
+  bool get _typeLocked => widget.entry?.settlementEntryId != null;
+
   @override
   void initState() {
     super.initState();
@@ -553,8 +555,20 @@ class _DebtFormSheetState extends State<DebtFormSheet> {
                   ),
                 ],
                 selected: {_isLent},
-                onSelectionChanged: (s) => setState(() => _isLent = s.first),
+                // Locked once settling recorded an income/expense: reopening
+                // removes that entry based on lent/borrowed, so switching
+                // sides now would remove the wrong kind.
+                onSelectionChanged: _typeLocked
+                    ? null
+                    : (s) => setState(() => _isLent = s.first),
               ),
+              if (_typeLocked) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Settled with a recorded ${_isLent ? 'income' : 'expense'}. Reopen it to switch between lent and borrowed.',
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
               const SizedBox(height: 16),
               TextFormField(
                 controller: _personController,

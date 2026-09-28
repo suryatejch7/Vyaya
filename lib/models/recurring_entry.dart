@@ -1,3 +1,5 @@
+import '../services/app_prefs.dart';
+
 /// A repeating expense or income (weekly, monthly or yearly), auto-created
 /// when due.
 enum RecurringType { expense, income }
@@ -75,8 +77,13 @@ class RecurringEntry {
   DateTime occurrenceInPeriodOf(DateTime day) {
     final d = _date(day);
     return switch (frequency) {
-      RecurringFrequency.weekly =>
-        DateTime(d.year, d.month, d.day - (d.weekday - 1) + (weekday - 1)),
+      // The chosen weekday within the calendar week (Sunday or Monday start,
+      // per Settings) that contains [day].
+      RecurringFrequency.weekly => () {
+          final start = AppPrefs.instance.weekStartOf(d);
+          final offset = (weekday - start.weekday) % 7;
+          return DateTime(start.year, start.month, start.day + offset);
+        }(),
       RecurringFrequency.monthly => occurrenceIn(d.year, d.month, dayOfMonth),
       RecurringFrequency.yearly => occurrenceIn(d.year, month, dayOfMonth),
     };

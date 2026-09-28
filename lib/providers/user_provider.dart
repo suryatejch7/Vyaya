@@ -153,23 +153,6 @@ class UserProvider extends ChangeNotifier {
       return false;
     }
   }
-  Future<void> updateMonthlyBudget(double budget) async {
-    if (_currentUser == null) {
-      _errorMessage = 'No user logged in';
-      return;
-    }
-    
-    try {
-      await LocalStore.updateMonthlyBudget(budget, userId: _currentUser!.id);
-      if (_userSettings != null) {
-        _userSettings = _userSettings!.copyWith(monthlyBudget: budget);
-        notifyListeners();
-      }
-    } catch (e) {
-      _errorMessage = 'Failed to update budget: $e';
-      throw Exception(_errorMessage);
-    }
-  }
   Future<void> clearUser() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('userId');

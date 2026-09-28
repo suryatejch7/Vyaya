@@ -1,5 +1,6 @@
 ﻿import '../../models/expense_models.dart';
 import '../../services/notification_service.dart';
+import '../../services/app_prefs.dart';
 
 class NotificationManager {
   Future<void> triggerExpenseNotifications({
@@ -11,6 +12,19 @@ class NotificationManager {
     required bool isFirstExpense,
   }) async {
     try {
+      // Optional large-payment alert: only for fresh payments (logged
+      // today), not back-dated entries or imported history.
+      final limit = AppPrefs.instance.largePaymentAlert;
+      final today = DateTime.now();
+      if (limit != null &&
+          expense.amount >= limit &&
+          expense.date.year == today.year &&
+          expense.date.month == today.month &&
+          expense.date.day == today.day) {
+        await NotificationService.showLargePayment(
+            expense.description, expense.amount);
+      }
+
       // Totals below are for the current month; an expense logged for an
       // earlier month can't push this month over anything.
       final now = DateTime.now();
@@ -30,6 +44,27 @@ class NotificationManager {
           monthlySpent,
           monthlyIncome,
         );
+      }
+
+      // Optional early warnings at 80%, so there's time to slow down.
+      if (AppPrefs.instance.earlyWarnings &&
+          await NotificationService.areNotificationsEnabled()) {
+        if (monthlyIncome > 0 &&
+            monthlySpent <= monthlyIncome &&
+            _crossed(monthlySpent, expense.amount, monthlyIncome * 0.8)) {
+          await NotificationService.showNearLimit(
+            '80% of this month\'s income spent',
+            '₹${(monthlyIncome - monthlySpent).toStringAsFixed(0)} left for the rest of the month.',
+          );
+        }
+        if (categoryBudget > 0 &&
+            categorySpent <= categoryBudget &&
+            _crossed(categorySpent, expense.amount, categoryBudget * 0.8)) {
+          await NotificationService.showNearLimit(
+            '${expense.category}: 80% of limit used',
+            '₹${(categoryBudget - categorySpent).toStringAsFixed(0)} left of your ₹${categoryBudget.toStringAsFixed(0)} ${expense.category} limit.',
+          );
+        }
       }
 
       if (categoryBudget > 0 &&

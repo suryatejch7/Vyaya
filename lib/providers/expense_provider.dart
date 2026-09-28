@@ -5,6 +5,7 @@ import '../models/recurring_entry.dart';
 import '../models/debt_entry.dart';
 import '../models/user_settings.dart';
 import '../services/local_store.dart';
+import '../services/app_prefs.dart';
 import 'managers/expense_data_manager.dart';
 import 'managers/income_data_manager.dart';
 import 'managers/budget_manager.dart';
@@ -42,7 +43,6 @@ class ExpenseProvider extends ChangeNotifier {
   List<BankAccount> get accounts => _accountManager.accounts;
   int get userId => _userId;
   String get userName => _userName;
-  double get monthlyBudget => _budgetManager.monthlyBudget;
   String get currency => _currency;
   bool get isLoading => _isLoading;
   String get searchQuery => _searchQuery;
@@ -58,8 +58,7 @@ class ExpenseProvider extends ChangeNotifier {
     _userName = userName;
     _currency = userSettings.currency;
 
-    _budgetManager.initialize(
-        userSettings.monthlyBudget, userSettings.categoryBudgets);
+    _budgetManager.initialize(userSettings.categoryBudgets);
     _customCategories.clear();
     _customCategories.addAll(userSettings.customCategories);
     _accountManager.initialize(userSettings.accounts);
@@ -114,8 +113,7 @@ class ExpenseProvider extends ChangeNotifier {
 
       final userSettings =
           await LocalStore.getUserSettings(userId: _userId);
-      _budgetManager.initialize(
-          userSettings.monthlyBudget, userSettings.categoryBudgets);
+      _budgetManager.initialize(userSettings.categoryBudgets);
       _currency = userSettings.currency;
       _customCategories.clear();
       _customCategories.addAll(userSettings.customCategories);
@@ -200,16 +198,6 @@ class ExpenseProvider extends ChangeNotifier {
   bool get isOverspent => currentMonthLeft < 0;
   double get overspentBy => currentMonthLeft < 0 ? -currentMonthLeft : 0;
 
-  bool get isOverBudget =>
-      _budgetManager.isOverBudget(currentMonthTotalExpense);
-  double get budgetExcess =>
-      _budgetManager.budgetExcess(currentMonthTotalExpense);
-  double get budgetUsed => currentMonthTotalExpense;
-  double get budgetRemaining =>
-      _budgetManager.budgetRemaining(currentMonthTotalExpense);
-  double get budgetUsagePercentage =>
-      _budgetManager.budgetUsagePercentage(currentMonthTotalExpense);
-
   List<Expense> get currentMonthExpenses {
     final now = DateTime.now();
     return _expenseManager.expenses.where((expense) {
@@ -243,49 +231,43 @@ class ExpenseProvider extends ChangeNotifier {
         .fold(0.0, (sum, expense) => sum + expense.amount);
   }
 
+  /// True if [d] falls in [period]. Calendar based with whole-day edges:
+  /// the week follows the Sunday/Monday setting, and a custom range covers
+  /// its start day through the end of its end day.
+  static bool dateInPeriod(DateTime d, FilterPeriod period,
+      {DateTime? customStart, DateTime? customEnd, DateTime? now}) {
+    final n = now ?? DateTime.now();
+    switch (period) {
+      case FilterPeriod.weekly:
+        final s = AppPrefs.instance.weekStartOf(n);
+        final e = DateTime(s.year, s.month, s.day + 7);
+        return !d.isBefore(s) && d.isBefore(e);
+      case FilterPeriod.monthly:
+        return d.year == n.year && d.month == n.month;
+      case FilterPeriod.yearly:
+        return d.year == n.year;
+      case FilterPeriod.allTime:
+        return true;
+      case FilterPeriod.custom:
+        if (customStart == null || customEnd == null) return true;
+        final s = DateTime(customStart.year, customStart.month, customStart.day);
+        final e = DateTime(customEnd.year, customEnd.month, customEnd.day + 1);
+        return !d.isBefore(s) && d.isBefore(e);
+    }
+  }
+
+  /// Spending in [period]. Leaves out the automatic "Saved" entries (they
+  /// aren't spending; see [savingsHistory] and the Savings screen).
   List<Expense> getExpensesByPeriodType(FilterPeriod period,
       {DateTime? customStart, DateTime? customEnd, String? accountId}) {
     final now = DateTime.now();
-
-    List<Expense> baseExpenses = accountId != null
-        ? _expenseManager.expenses
-            .where((expense) => expense.accountId == accountId)
-            .toList()
-        : _expenseManager.expenses;
-
-    switch (period) {
-      case FilterPeriod.weekly:
-        final weekStart = now.subtract(Duration(days: now.weekday - 1));
-        return baseExpenses.where((expense) {
-          return expense.date
-                  .isAfter(weekStart.subtract(const Duration(days: 1))) &&
-              expense.date.isBefore(now.add(const Duration(days: 1)));
-        }).toList();
-
-      case FilterPeriod.monthly:
-        return baseExpenses.where((expense) {
-          return expense.date.year == now.year &&
-              expense.date.month == now.month;
-        }).toList();
-
-      case FilterPeriod.yearly:
-        return baseExpenses.where((expense) {
-          return expense.date.year == now.year;
-        }).toList();
-
-      case FilterPeriod.allTime:
-        return List.from(baseExpenses);
-
-      case FilterPeriod.custom:
-        if (customStart == null || customEnd == null) {
-          return List.from(baseExpenses);
-        }
-        return baseExpenses.where((expense) {
-          return expense.date
-                  .isAfter(customStart.subtract(const Duration(days: 1))) &&
-              expense.date.isBefore(customEnd.add(const Duration(days: 1)));
-        }).toList();
-    }
+    return _expenseManager.expenses
+        .where((e) =>
+            !_isAutoSaved(e) &&
+            (accountId == null || e.accountId == accountId) &&
+            dateInPeriod(e.date, period,
+                customStart: customStart, customEnd: customEnd, now: now))
+        .toList();
   }
 
   double getTotalByPeriod(FilterPeriod period,
@@ -426,6 +408,14 @@ class ExpenseProvider extends ChangeNotifier {
     try {
       _isLoading = true;
       notifyListeners();
+      // Same as the Saved entry: deleting a carried-over leftover yourself
+      // means "not for this month", so it isn't recreated.
+      final target =
+          _incomeManager.incomes.where((i) => i.id == incomeId).firstOrNull;
+      final carryMonth = target == null ? null : _carryMonthOf(target);
+      if (carryMonth != null) {
+        await _setSkippedSavingsMonths(_skippedSavingsMonths..add(carryMonth));
+      }
       await _incomeManager.deleteIncome(incomeId, _userId);
       await _resyncSavings();
       _refreshCalculations();
@@ -453,40 +443,12 @@ class ExpenseProvider extends ChangeNotifier {
   List<Income> getIncomesByPeriod(FilterPeriod period,
       {DateTime? customStart, DateTime? customEnd, String? accountId}) {
     final now = DateTime.now();
-    List<Income> filtered = accountId != null
-        ? _incomeManager.incomes
-            .where((i) => i.accountId == accountId)
-            .toList()
-        : _incomeManager.incomes;
-
-    switch (period) {
-      case FilterPeriod.weekly:
-        final weekStart = now.subtract(Duration(days: now.weekday - 1));
-        return filtered
-            .where((i) => i.date
-                .isAfter(weekStart.subtract(const Duration(days: 1))))
-            .toList();
-      case FilterPeriod.monthly:
-        return filtered
-            .where(
-                (i) => i.date.year == now.year && i.date.month == now.month)
-            .toList();
-      case FilterPeriod.yearly:
-        return filtered.where((i) => i.date.year == now.year).toList();
-      case FilterPeriod.allTime:
-        return filtered;
-      case FilterPeriod.custom:
-        if (customStart != null && customEnd != null) {
-          return filtered
-              .where((i) =>
-                  i.date.isAfter(
-                      customStart.subtract(const Duration(days: 1))) &&
-                  i.date
-                      .isBefore(customEnd.add(const Duration(days: 1))))
-              .toList();
-        }
-        return filtered;
-    }
+    return _incomeManager.incomes
+        .where((i) =>
+            (accountId == null || i.accountId == accountId) &&
+            dateInPeriod(i.date, period,
+                customStart: customStart, customEnd: customEnd, now: now))
+        .toList();
   }
 
   Future<void> loadIncomes() async {
@@ -494,32 +456,8 @@ class ExpenseProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> updateMonthlyBudget(double budget) async {
-    try {
-      _isLoading = true;
-      notifyListeners();
-      await _budgetManager.updateMonthlyBudget(budget, _userId);
-      notifyListeners();
-    } catch (e) {
-      throw Exception('Failed to update budget: $e');
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
   double getCategoryBudget(String categoryName) {
     return _budgetManager.getCategoryBudget(categoryName, _customCategories);
-  }
-
-  Future<void> setCategoryBudget(String categoryName, double budget) async {
-    try {
-      await _budgetManager.setCategoryBudget(
-          categoryName, budget, _customCategories, _userId);
-      notifyListeners();
-    } catch (e) {
-      throw Exception('Failed to update category budget: $e');
-    }
   }
 
   double getCustomCategoryBudget(String categoryId) {
@@ -646,6 +584,11 @@ class ExpenseProvider extends ChangeNotifier {
       Iterable<String> names) async {
     final all =
         await LocalStore.getExpenseCountsByCategory(userId: _userId);
+    // Recurring entries count too, so deleting a category that only has a
+    // recurring bill still asks where to move it.
+    for (final r in _recurring) {
+      all[r.category] = (all[r.category] ?? 0) + 1;
+    }
     return {
       for (final n in names)
         if ((all[n] ?? 0) > 0) n: all[n]!,
@@ -663,6 +606,17 @@ class ExpenseProvider extends ChangeNotifier {
       if (reassign.isNotEmpty) {
         await LocalStore.reassignExpenseCategories(reassign,
             userId: _userId);
+        // Recurring entries follow too, or future ones would be created
+        // under the deleted category (and land in "Other").
+        var recurringChanged = false;
+        for (var i = 0; i < _recurring.length; i++) {
+          final to = reassign[_recurring[i].category];
+          if (to != null) {
+            _recurring[i] = _recurring[i].copyWith(category: to);
+            recurringChanged = true;
+          }
+        }
+        if (recurringChanged) await _saveRecurring();
       }
       _customCategories.removeWhere((cat) => categoryIds.contains(cat.id));
       await LocalStore.saveCustomCategories(_customCategories,
@@ -710,8 +664,29 @@ class ExpenseProvider extends ChangeNotifier {
   List<Income> get viewMonthIncomes =>
       _incomeManager.incomes.where((i) => _inViewMonth(i.date)).toList();
 
-  double get viewMonthTotalExpense =>
-      viewMonthExpenses.fold(0.0, (sum, e) => sum + e.amount);
+  /// Real spending in the viewed month. The automatic "Saved" entry isn't
+  /// spending, so it's left out (see [viewMonthSaved]).
+  double get viewMonthTotalExpense => viewMonthExpenses
+      .where((e) => !_isAutoSaved(e))
+      .fold(0.0, (sum, e) => sum + e.amount);
+
+  /// The viewed month's leftover that went into "Saved".
+  double get viewMonthSaved => viewMonthExpenses
+      .where(_isAutoSaved)
+      .fold(0.0, (sum, e) => sum + e.amount);
+
+  /// The viewed month's leftover carried into the next month.
+  double get viewMonthCarriedOut {
+    final tag = '$_autoCarryPrefix${_monthKey(_viewMonth)}';
+    return _incomeManager.incomes
+        .where((i) => i.tag == tag)
+        .fold(0.0, (sum, i) => sum + i.amount);
+  }
+
+  /// Part of the viewed month's income that was carried in from last month.
+  double get viewMonthCarriedIn => viewMonthIncomes
+      .where(isCarryForwardEntry)
+      .fold(0.0, (sum, i) => sum + i.amount);
 
   double get viewMonthIncome =>
       viewMonthIncomes.fold(0.0, (sum, i) => sum + i.amount);
@@ -722,7 +697,7 @@ class ExpenseProvider extends ChangeNotifier {
 
   Map<String, double> get viewMonthCategoryTotals {
     final totals = <String, double>{};
-    for (final e in viewMonthExpenses) {
+    for (final e in viewMonthExpenses.where((e) => !_isAutoSaved(e))) {
       final key = categoryBucket(e.category);
       totals[key] = (totals[key] ?? 0) + e.amount;
     }
@@ -745,9 +720,14 @@ class ExpenseProvider extends ChangeNotifier {
   }
 
   Future<void> restoreIncomes(List<Income> incomes) async {
+    final skipped = _skippedSavingsMonths;
+    var skipChanged = false;
     for (final i in incomes) {
+      final carryMonth = _carryMonthOf(i);
+      if (carryMonth != null) skipChanged |= skipped.remove(carryMonth);
       await _incomeManager.addIncome(i, _userId);
     }
+    if (skipChanged) await _setSkippedSavingsMonths(skipped);
     await _resyncSavings();
     notifyListeners();
   }
@@ -804,6 +784,7 @@ class ExpenseProvider extends ChangeNotifier {
     _recurring.add(entry);
     await _saveRecurring();
     await _processRecurring(); // creates it now if already due
+    await _resyncSavings(); // it may have landed in a closed month
     notifyListeners();
   }
 
@@ -813,6 +794,7 @@ class ExpenseProvider extends ChangeNotifier {
     _recurring[i] = entry;
     await _saveRecurring();
     await _processRecurring();
+    await _resyncSavings();
     notifyListeners();
   }
 
@@ -837,6 +819,7 @@ class ExpenseProvider extends ChangeNotifier {
     _recurring[i] = r;
     await _saveRecurring();
     await _processRecurring();
+    await _resyncSavings();
     notifyListeners();
   }
 
@@ -909,11 +892,29 @@ class ExpenseProvider extends ChangeNotifier {
   /// leaves it out.
   static bool isAutoSavedEntry(Expense e) => _isAutoSaved(e);
 
+  /// Tag stored in Income.tag for a month's leftover carried into the next
+  /// month, e.g. "auto-carry-2026-09" (dated 1 Oct 2026).
+  static const String _autoCarryPrefix = 'auto-carry-';
+
+  /// True for the automatic "carried over" income.
+  static bool isCarryForwardEntry(Income i) =>
+      i.tag?.startsWith(_autoCarryPrefix) ?? false;
+
+  /// Month key ("2026-09") a carried-over income came from.
+  static String? _carryMonthOf(Income i) => isCarryForwardEntry(i)
+      ? i.tag!.substring(_autoCarryPrefix.length)
+      : null;
+
   bool _savingsRunning = false;
 
-  /// Month-end savings on/off (Settings → Money). On by default.
-  bool get monthEndSavingsEnabled =>
-      LocalStore.getMeta('savings_enabled', userId: _userId) != '0';
+  /// What happens to a month's leftover (Settings → Optional features):
+  /// true  = it goes into a "Saved" entry on the month's last day (default);
+  /// false = it's carried into next month as income on the 1st.
+  bool get monthEndSavingsEnabled {
+    final mode = LocalStore.getMeta('month_end_mode', userId: _userId);
+    if (mode != null) return mode != 'carry';
+    return LocalStore.getMeta('savings_enabled', userId: _userId) != '0';
+  }
 
   /// Months whose Saved entry you deleted yourself; they aren't recreated.
   Set<String> get _skippedSavingsMonths {
@@ -931,22 +932,16 @@ class ExpenseProvider extends ChangeNotifier {
       ? e.transactionId!.substring(_autoSavedPrefix.length)
       : null;
 
-  /// Turns month-end savings on or off. Turning off can also delete the
-  /// Saved entries already made. Turning back on starts from this month
-  /// (earlier months aren't back-filled).
-  Future<void> setMonthEndSavings(bool on, {bool removeExisting = false}) async {
-    await LocalStore.setMeta('savings_enabled', on ? '1' : '0',
+  /// Switches between saving the leftover and carrying it forward. The
+  /// new choice applies from this month on (the first month it closes);
+  /// entries already made for earlier months are left as they are.
+  Future<void> setMonthEndSavings(bool on) async {
+    final now = DateTime.now();
+    await LocalStore.setMeta('month_end_mode', on ? 'save' : 'carry',
         userId: _userId);
-    if (on) {
-      final now = DateTime.now();
-      await LocalStore.setMeta(
-          'savings_from', _monthKey(DateTime(now.year, now.month)),
-          userId: _userId);
-    } else if (removeExisting) {
-      for (final e in _expenseManager.expenses.where(_isAutoSaved).toList()) {
-        if (e.id != null) await _expenseManager.deleteExpense(e.id!, _userId);
-      }
-    }
+    await LocalStore.setMeta(
+        'savings_from', _monthKey(DateTime(now.year, now.month)),
+        userId: _userId);
     notifyListeners();
   }
 
@@ -956,11 +951,25 @@ class ExpenseProvider extends ChangeNotifier {
   /// reflected automatically. Months before this feature started are left
   /// alone (no back-filling).
   Future<void> _processMonthEndSavings() async {
-    if (_userId == 0 || _savingsRunning || !monthEndSavingsEnabled) return;
+    if (_userId == 0 || _savingsRunning) return;
     _savingsRunning = true;
     try {
       final now = DateTime.now();
       final thisMonth = DateTime(now.year, now.month);
+
+      // Before 3.1 the switch meant "Saved" or nothing. Someone who had it
+      // off now gets carry-forward, starting with this month only, so
+      // past months are never touched.
+      if (LocalStore.getMeta('month_end_mode', userId: _userId) == null) {
+        final wasOn =
+            LocalStore.getMeta('savings_enabled', userId: _userId) != '0';
+        await LocalStore.setMeta('month_end_mode', wasOn ? 'save' : 'carry',
+            userId: _userId);
+        if (!wasOn) {
+          await LocalStore.setMeta('savings_from', _monthKey(thisMonth),
+              userId: _userId);
+        }
+      }
 
       var fromKey =
           LocalStore.getMeta('savings_from', userId: _userId);
@@ -994,6 +1003,8 @@ class ExpenseProvider extends ChangeNotifier {
   Future<void> _reconcileSavingsFor(DateTime m) async {
     final now = DateTime.now();
     final tag = '$_autoSavedPrefix${_monthKey(m)}';
+    final carryTag = '$_autoCarryPrefix${_monthKey(m)}';
+    final saveMode = monthEndSavingsEnabled;
     bool inMonth(DateTime d) => d.year == m.year && d.month == m.month;
 
     final income = _incomeManager.incomes
@@ -1003,6 +1014,22 @@ class ExpenseProvider extends ChangeNotifier {
         .where((e) => inMonth(e.date) && !_isAutoSaved(e))
         .fold(0.0, (sum, e) => sum + e.amount);
     final left = double.parse((income - spent).toStringAsFixed(2));
+
+    if (!saveMode) {
+      // Carry-forward: no Saved entry for this month...
+      for (final e in _expenseManager.expenses
+          .where((e) => e.transactionId == tag)
+          .toList()) {
+        if (e.id != null) await _expenseManager.deleteExpense(e.id!, _userId);
+      }
+      await _reconcileCarryFor(m, carryTag, left);
+      return;
+    }
+    // ...and in Saved mode, no carried-over income from it.
+    for (final i
+        in _incomeManager.incomes.where((i) => i.tag == carryTag).toList()) {
+      if (i.id != null) await _incomeManager.deleteIncome(i.id!, _userId);
+    }
 
     final autoEntries =
         _expenseManager.expenses.where((e) => e.transactionId == tag).toList();
@@ -1049,6 +1076,46 @@ class ExpenseProvider extends ChangeNotifier {
     }
   }
 
+  /// Keeps month [m]'s carried-over income (dated the 1st of the next
+  /// month) equal to its leftover; removes it when nothing is left.
+  Future<void> _reconcileCarryFor(DateTime m, String carryTag, double left) async {
+    final now = DateTime.now();
+    final entries =
+        _incomeManager.incomes.where((i) => i.tag == carryTag).toList();
+    for (final extra in entries.skip(1)) {
+      if (extra.id != null) {
+        await _incomeManager.deleteIncome(extra.id!, _userId);
+      }
+    }
+    final existing = entries.isEmpty ? null : entries.first;
+
+    if (left > 0) {
+      if (existing == null) {
+        await _incomeManager.addIncome(
+          Income(
+            amount: left,
+            title: 'Carried over from ${DateFormat('MMMM yyyy').format(m)}',
+            source: 'Leftover',
+            date: DateTime(m.year, m.month + 1, 1),
+            notes: 'Leftover (income − spent), kept up to date automatically',
+            accountId: defaultAccount?.id,
+            tag: carryTag,
+            createdAt: now,
+            updatedAt: now,
+          ),
+          _userId,
+        );
+      } else if ((existing.amount - left).abs() >= 0.005) {
+        await _incomeManager.updateIncome(
+          existing.copyWith(amount: left, updatedAt: now),
+          _userId,
+        );
+      }
+    } else if (existing?.id != null) {
+      await _incomeManager.deleteIncome(existing!.id!, _userId);
+    }
+  }
+
   /// Re-checks closed months after any add/edit/delete.
   Future<void> _resyncSavings() async {
     try {
@@ -1071,6 +1138,86 @@ class ExpenseProvider extends ChangeNotifier {
       color: Colors.teal,
     ));
   }
+
+  // ==================== SAVINGS OVERVIEW ====================
+
+  /// This month so far: income minus spending (what month-end will save or
+  /// carry over, if nothing else changes).
+  double get thisMonthLeft {
+    final now = DateTime.now();
+    bool inMonth(DateTime d) => d.year == now.year && d.month == now.month;
+    final income = _incomeManager.incomes
+        .where((i) => inMonth(i.date))
+        .fold(0.0, (s, i) => s + i.amount);
+    final spent = _expenseManager.expenses
+        .where((e) => inMonth(e.date) && !_isAutoSaved(e))
+        .fold(0.0, (s, e) => s + e.amount);
+    return income - spent;
+  }
+
+  /// Carried in from last month, included in this month's income.
+  double get thisMonthCarriedIn {
+    final now = DateTime.now();
+    return _incomeManager.incomes
+        .where((i) =>
+            isCarryForwardEntry(i) &&
+            i.date.year == now.year &&
+            i.date.month == now.month)
+        .fold(0.0, (s, i) => s + i.amount);
+  }
+
+  /// Closed months that have a Saved entry or a carried-over leftover,
+  /// newest first, with that month's income and real spending.
+  List<MonthSavings> get savingsHistory {
+    final byMonth = <String, MonthSavings>{};
+    MonthSavings slot(String key) {
+      final m = _parseMonthKey(key)!;
+      return byMonth.putIfAbsent(key, () {
+        bool inMonth(DateTime d) => d.year == m.year && d.month == m.month;
+        return MonthSavings(
+          month: m,
+          income: _incomeManager.incomes
+              .where((i) => inMonth(i.date))
+              .fold(0.0, (s, i) => s + i.amount),
+          spent: _expenseManager.expenses
+              .where((e) => inMonth(e.date) && !_isAutoSaved(e))
+              .fold(0.0, (s, e) => s + e.amount),
+        );
+      });
+    }
+
+    for (final e in _expenseManager.expenses.where(_isAutoSaved)) {
+      final key = _savedMonthOf(e);
+      if (key == null || _parseMonthKey(key) == null) continue;
+      slot(key).savedEntry = e;
+    }
+    for (final i in _incomeManager.incomes.where(isCarryForwardEntry)) {
+      final key = _carryMonthOf(i);
+      if (key == null || _parseMonthKey(key) == null) continue;
+      slot(key).carryEntry = i;
+    }
+    return byMonth.values.toList()
+      ..sort((a, b) => b.month.compareTo(a.month));
+  }
+
+  /// Total put into "Saved" for months whose last day falls in [period].
+  double savedInPeriod(FilterPeriod period,
+          {DateTime? customStart, DateTime? customEnd}) =>
+      _expenseManager.expenses
+          .where((e) =>
+              _isAutoSaved(e) &&
+              dateInPeriod(e.date, period,
+                  customStart: customStart, customEnd: customEnd))
+          .fold(0.0, (s, e) => s + e.amount);
+
+  int savedMonthsInPeriod(FilterPeriod period,
+          {DateTime? customStart, DateTime? customEnd}) =>
+      _expenseManager.expenses
+          .where((e) =>
+              _isAutoSaved(e) &&
+              dateInPeriod(e.date, period,
+                  customStart: customStart, customEnd: customEnd))
+          .length;
 
   // ==================== LENT & BORROWED ====================
 
@@ -1335,4 +1482,19 @@ class ExpenseProvider extends ChangeNotifier {
         .where((expense) => categoryBucket(expense.category) == category)
         .fold(0.0, (sum, expense) => sum + expense.amount);
   }
+}
+
+/// One closed month in the Savings screen.
+class MonthSavings {
+  final DateTime month;
+  final double income;
+  final double spent;
+  Expense? savedEntry;
+  Income? carryEntry;
+
+  MonthSavings({required this.month, required this.income, required this.spent});
+
+  double get saved => savedEntry?.amount ?? 0;
+  double get carried => carryEntry?.amount ?? 0;
+  double get amount => saved + carried;
 }

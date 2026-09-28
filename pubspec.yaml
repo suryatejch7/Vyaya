@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 2.1.2+1
+version: 3.1.0+2
 
 environment:
   sdk: ^3.9.2
@@ -61,6 +61,13 @@ dependencies:
   permission_handler: ^12.0.1
   intl: ^0.20.2
 
+  # Opens the GitHub Releases link in the browser (Settings footer). The
+  # browser does the loading; Vyaya itself still has no INTERNET permission.
+  url_launcher: ^6.3.0
+
+  # App lock: PIN stored only as a salted SHA-256 hash (pure Dart, offline).
+  crypto: ^3.0.3
+
   # Native payment detection (bank SMS + payment-app notifications)
   vyaya_capture:
     path: packages/vyaya_capture
@@ -80,5 +87,5 @@ flutter:
 
 flutter_launcher_icons:
   android: true
-  ios: true
+  ios: false # Android-only app (no ios/ folder)
   image_path: "assets/app_icon.png"

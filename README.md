@@ -76,7 +76,8 @@ Some features are hidden behind gestures, so here's the cheat sheet:
 | Nav bar | Tap **Home** / **Categories** | Switch tabs (you can also swipe sideways on the bar) |
 | Nav bar | Tap **Search** | Search through your expenses |
 | Nav bar | **Swipe up** (or long-press Search) | Opens **Analytics, Detected Payments, Lent & Borrowed, Settings** (Recurring is in Settings) |
-| Home | Tap **+** | Add expense or add income |
+| Home | Tap **+** (bottom right, next to the nav bar) | Add expense or add income |
+| Categories | Tap the **filter** button (bottom right) | Change the period (week, month, year, all time, custom) or account |
 | Home | Tap the "payments detected" banner | Review auto-detected payments |
 | Home | ◀ ▶ next to the month | Look at previous months |
 | Home | Tap "Recent Activity" | Switch to the credit card view |

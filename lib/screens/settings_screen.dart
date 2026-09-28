@@ -11,11 +11,16 @@ import '../services/export_service.dart';
 import '../services/backup_service.dart';
 // import 'crop_calibration_screen.dart'; // screenshot scanning off (offline build)
 import 'recurring_screen.dart';
+import 'lent_borrowed_screen.dart';
+import 'savings_screen.dart';
+import '../services/app_prefs.dart';
+import '../widgets/app_lock.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// Settings is a hub page; heavier sections open as their own pages that
 /// reuse the same state class (so dialogs/helpers are shared).
-enum SettingsPage { home, categories, accounts, autoDetect }
+enum SettingsPage { home, categories, accounts, autoDetect, optionalFeatures }
 
 class SettingsScreen extends StatefulWidget {
   final SettingsPage page;
@@ -51,11 +56,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _loadUserData();
+    AppPrefs.instance.addListener(_onPrefsChanged);
   }
 
+  void _onPrefsChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void dispose() {
+    AppPrefs.instance.removeListener(_onPrefsChanged);
     _nameController.dispose();
     _categoryNameController.dispose();
     _categoryBudgetController.dispose();
@@ -103,6 +113,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
       case SettingsPage.autoDetect:
         return _subPage('Auto-detect Payments', _buildAutoDetectSection());
+      case SettingsPage.optionalFeatures:
+        return _subPage(
+          'Optional features',
+          Consumer<ExpenseProvider>(
+            builder: (context, ep, child) => _buildOptionalFeatures(ep),
+          ),
+        );
       case SettingsPage.home:
         return _buildHome();
     }
@@ -251,8 +268,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (context, userProvider, expenseProvider, cap, child) {
           final accounts = expenseProvider.accounts;
           final defaultAccount = expenseProvider.defaultAccount;
-          final activeRecurring =
-              expenseProvider.recurringEntries.where((r) => r.active).length;
+          final prefs = AppPrefs.instance;
           final catCount = expenseProvider.categories.length;
 
           return ListView(
@@ -280,33 +296,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: () => _open(SettingsPage.accounts),
                 ),
                 _row(
-                  icon: Icons.repeat_rounded,
-                  color: Colors.teal,
-                  title: 'Recurring',
-                  subtitle: activeRecurring == 0
-                      ? 'Weekly, monthly or yearly income and bills'
-                      : '$activeRecurring active',
+                  icon: Icons.savings_outlined,
+                  color: const Color(0xFF26A69A),
+                  title: 'Savings',
+                  subtitle: expenseProvider.monthEndSavingsEnabled
+                      ? 'Month-end leftovers, month by month'
+                      : 'Leftovers carried into the next month',
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                        builder: (context) => const RecurringScreen()),
+                        builder: (context) => const SavingsScreen()),
                   ),
                 ),
-                _row(
-                  icon: Icons.savings_outlined,
-                  color: Colors.green,
-                  title: 'Month-end savings',
-                  subtitle: expenseProvider.monthEndSavingsEnabled
-                      ? 'Leftover each month goes into "Saved"'
-                      : 'Off',
-                  chevron: false,
-                  onTap: () => _toggleMonthEndSavings(
-                      expenseProvider, !expenseProvider.monthEndSavingsEnabled),
-                  trailing: Switch(
-                    value: expenseProvider.monthEndSavingsEnabled,
-                    onChanged: (v) => _toggleMonthEndSavings(expenseProvider, v),
-                  ),
-                ),
+                // Whichever shortcut isn't in the quick actions sheet.
+                _shortcutRow(prefs.shortcutInSettings, expenseProvider, cap),
               ]),
 
               _groupLabel('AUTOMATION'),
@@ -385,6 +388,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ]),
 
+              _groupLabel('PREFERENCES'),
+              _group([
+                _row(
+                  icon: Icons.tune_rounded,
+                  color: Colors.purpleAccent,
+                  title: 'Optional features',
+                  subtitle: _optionalSummary(expenseProvider),
+                  onTap: () => _open(SettingsPage.optionalFeatures),
+                ),
+              ]),
+
               _groupLabel('DATA'),
               _group([
                 _row(
@@ -426,11 +440,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ]),
 
               const SizedBox(height: 24),
-              Center(
-                child: Text(
-                  'Vyaya v2.1.2',
-                  style: TextStyle(color: Colors.grey[700], fontSize: 12),
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Vyaya v${AppPrefs.appVersion}  ·  ',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                  ),
+                  InkWell(
+                    onTap: _openReleases,
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 2, vertical: 6),
+                      child: Text(
+                        'GitHub Releases',
+                        style: TextStyle(
+                          color: Colors.lightBlue[300],
+                          fontSize: 12,
+                          decoration: TextDecoration.underline,
+                          decorationColor: Colors.lightBlue[300],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           );
@@ -839,23 +873,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
         text: existingLimit > 0 ? existingLimit.toStringAsFixed(0) : '');
     String? nameError;
 
-    showDialog(
+    showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: const Color(0xFF1A1A1A),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          backgroundColor: const Color(0xFF2A2A2A),
-          title: Text(
-            isEdit ? 'Edit Category' : 'Add Category',
-            style: const TextStyle(color: Colors.white),
-          ),
-          // Fixed width: AlertDialog measures its content's intrinsic
-          // width, which the horizontal icon-group list can't report.
-          content: SizedBox(
-            width: double.maxFinite,
-            child: SingleChildScrollView(
+        builder: (context, setState) => Padding(
+          // Lift the sheet above the keyboard.
+          padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  isEdit ? 'Edit Category' : 'New Category',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold),
+                ),
+                // Room above the first field so its floating label isn't cut.
+                const SizedBox(height: 18),
                 // Category Name Input
                 TextField(
                   controller: _categoryNameController,
@@ -946,21 +1001,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Choose Icon',
-                    style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                // Icon groups
-                SizedBox(
-                  height: 36,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: [
+                // Title on the left, icon groups scrolling beside it.
+                Row(
+                  children: [
+                    const Text(
+                      'Choose Icon',
+                      style: TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _ScrollArrowsRow(
+                        height: 36,
+                        fadeColor: const Color(0xFF1A1A1A),
+                        initialIndex:
+                            _categoryEmojiGroups.keys.toList().indexOf(group),
+                        children: [
                       for (final g in _categoryEmojiGroups.keys)
                         Padding(
                           padding: const EdgeInsets.only(right: 6),
@@ -975,14 +1031,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                             selectedColor:
                                 Theme.of(context).colorScheme.primary,
-                            backgroundColor: const Color(0xFF1A1A1A),
+                            backgroundColor: const Color(0xFF2A2A2A),
                             side: BorderSide.none,
                             shape: const StadiumBorder(),
                             visualDensity: VisualDensity.compact,
                           ),
                         ),
-                    ],
-                  ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 10),
                 Wrap(
@@ -1101,16 +1159,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   }).toList(),
                 ),
-              ],
-            ),
-          ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
               onPressed: _isAddingCategory ? null : () async {
                 if (editing != null) {
                   final navigator = Navigator.of(context);
@@ -1216,6 +1281,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Theme.of(context).colorScheme.primary,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
               child: _isAddingCategory 
                 ? const SizedBox(
@@ -1228,12 +1296,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   )
                 : Text(isEdit ? 'Save' : 'Add'),
             ),
-          ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
     // customIcon / limitController aren't disposed here on purpose: the
-    // dialog's future completes when it starts closing, while its text
+    // sheet's future completes when it starts closing, while its text
     // fields are still on screen, and disposing then crashes the frame.
     // They're local and get garbage-collected with the dialog.
   }
@@ -1291,6 +1364,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// per-category "Move to" options, 3) delete (+ reassign).
   Future<void> _startCategoryDelete(
       ExpenseProvider provider, List<ExpenseCategory> targets) async {
+    // "Saved" holds the month-end savings; the app keeps it.
+    if (targets.any((c) => c.name == ExpenseProvider.savedCategoryName)) {
+      targets = targets
+          .where((c) => c.name != ExpenseProvider.savedCategoryName)
+          .toList();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('"Saved" holds your month-end savings, so it stays')));
+    }
     if (targets.isEmpty) return;
     final label = targets.length == 1
         ? '"${targets.first.name}"'
@@ -1352,11 +1433,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     // Step 3: delete
     final messenger = ScaffoldMessenger.of(context);
+    final capture = context.read<CaptureProvider>();
     try {
       await provider.removeCustomCategories(
         targets.map((c) => c.id).toSet(),
         reassign: reassign,
       );
+      // Detected payments and learned payee rules follow the move too.
+      for (final e in reassign.entries) {
+        await capture.renameCategory(e.key, e.value);
+      }
       if (!mounted) return;
       _clearCategorySelection();
       final moved = reassign.keys.fold<int>(0, (s, k) => s + (counts[k] ?? 0));
@@ -1364,7 +1450,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         SnackBar(
           content: Text(
             'Deleted $label'
-            '${moved > 0 ? ' · moved $moved ${moved == 1 ? 'expense' : 'expenses'}' : ''}',
+            '${moved > 0 ? ' · moved $moved ${moved == 1 ? 'entry' : 'entries'}' : ''}',
           ),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 2),
@@ -2066,6 +2152,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               await userProvider.registerUser('LocalUser');
               await userProvider.initializeExpenseProvider(expenseProvider);
               await captureProvider.reload();
+              // Optional features were wiped too: cancel the reminder.
+              await AppPrefs.instance.reloadAfterDataChange(
+                  NotificationService.syncDailyReminder);
 
               if (mounted) {
                 navigator.popUntil((route) => route.isFirst);
@@ -2080,55 +2169,564 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// Month-end savings switch. Turning it off asks whether to keep the Saved
-  /// entries already made.
+  /// Month-end savings switch: on puts each month's leftover into "Saved",
+  /// off carries it into the next month as income. Applies from this month.
   Future<void> _toggleMonthEndSavings(ExpenseProvider provider, bool on) async {
     final messenger = ScaffoldMessenger.of(context);
-    if (on) {
-      await provider.setMonthEndSavings(true);
-      messenger.showSnackBar(const SnackBar(
-          content: Text('Month-end savings on. Starts with this month.')));
-      return;
+    await provider.setMonthEndSavings(on);
+    messenger.showSnackBar(SnackBar(
+      content: Text(on
+          ? 'From this month, the leftover goes into "Saved"'
+          : 'From this month, the leftover carries into next month as income'),
+    ));
+  }
+
+  // ==================== OPTIONAL FEATURES (page) ====================
+
+  /// "3 on · Month-end savings" style summary for the hub row.
+  String _optionalSummary(ExpenseProvider ep) {
+    final p = AppPrefs.instance;
+    final on = [
+      p.hideHomeTotals,
+      p.showSpendingPace,
+      p.reminderMinutes != null,
+      p.autoFocusAmount,
+      p.rememberLastUsed,
+      p.lateNightIsYesterday,
+      p.savingsGoal != null,
+      p.largePaymentAlert != null,
+      p.weeklySummary,
+      p.monthlyRecap,
+      p.billReminders,
+      p.earlyWarnings,
+      p.appLockEnabled,
+    ].where((v) => v).length;
+    final savings = ep.monthEndSavingsEnabled ? 'Saving leftover' : 'Carrying leftover';
+    return '$savings · ${on == 0 ? 'extras off' : '$on extra${on == 1 ? '' : 's'} on'}';
+  }
+
+  Widget _buildOptionalFeatures(ExpenseProvider expenseProvider) {
+    final prefs = AppPrefs.instance;
+    final reminder = prefs.reminderMinutes;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+              _groupLabel('MONEY'),
+              _group([
+                _row(
+                  icon: Icons.savings_outlined,
+                  color: Colors.green,
+                  title: 'Month-end savings',
+                  subtitle: expenseProvider.monthEndSavingsEnabled
+                      ? 'Leftover each month goes into "Saved"'
+                      : 'Off · leftover carries into next month as income',
+                  chevron: false,
+                  onTap: () => _toggleMonthEndSavings(
+                      expenseProvider, !expenseProvider.monthEndSavingsEnabled),
+                  trailing: Switch(
+                    value: expenseProvider.monthEndSavingsEnabled,
+                    onChanged: (v) => _toggleMonthEndSavings(expenseProvider, v),
+                  ),
+                ),
+                _row(
+                  icon: Icons.date_range_rounded,
+                  color: Colors.lightBlue,
+                  title: 'Week starts on',
+                  subtitle: prefs.weekStartsMonday
+                      ? 'Weeks run Monday to Sunday'
+                      : 'Weeks run Sunday to Saturday',
+                  chevron: false,
+                  onTap: () =>
+                      prefs.setWeekStartsMonday(!prefs.weekStartsMonday),
+                  trailing: _pill(prefs.weekStartsMonday ? 'Monday' : 'Sunday'),
+                ),
+              ]),
+
+              _groupLabel('HOME'),
+              _group([
+                _row(
+                  icon: Icons.visibility_off_outlined,
+                  color: Colors.blueGrey,
+                  title: 'Hide totals on Home',
+                  subtitle: 'Mask spent, income and left · tap the amount to peek',
+                  chevron: false,
+                  onTap: () => prefs.setHideHomeTotals(!prefs.hideHomeTotals),
+                  trailing: Switch(
+                    value: prefs.hideHomeTotals,
+                    onChanged: prefs.setHideHomeTotals,
+                  ),
+                ),
+                _row(
+                  icon: Icons.trending_down_rounded,
+                  color: Colors.greenAccent,
+                  title: 'Spending pace on Home',
+                  subtitle: 'Today\'s spend and how much you can spend per day',
+                  chevron: false,
+                  onTap: () =>
+                      prefs.setShowSpendingPace(!prefs.showSpendingPace),
+                  trailing: Switch(
+                    value: prefs.showSpendingPace,
+                    onChanged: prefs.setShowSpendingPace,
+                  ),
+                ),
+                _row(
+                  icon: Icons.swipe_up_rounded,
+                  color: Colors.purpleAccent,
+                  title: 'Quick actions',
+                  subtitle:
+                      'Swipe up on the nav bar · ${prefs.shortcutsInSheet.map(_shortcutName).join(' & ')}',
+                  onTap: _showQuickActionsPicker,
+                ),
+              ]),
+
+              _groupLabel('ADDING ENTRIES'),
+              _group([
+                _row(
+                  icon: Icons.keyboard_outlined,
+                  color: Colors.tealAccent,
+                  title: 'Open keyboard on Add',
+                  subtitle: 'Add Expense / Income starts on the amount',
+                  chevron: false,
+                  onTap: () => prefs.setAutoFocusAmount(!prefs.autoFocusAmount),
+                  trailing: Switch(
+                    value: prefs.autoFocusAmount,
+                    onChanged: prefs.setAutoFocusAmount,
+                  ),
+                ),
+                _row(
+                  icon: Icons.history_rounded,
+                  color: Colors.orange,
+                  title: 'Remember last category',
+                  subtitle: 'Add Expense starts with the category and account you used last',
+                  chevron: false,
+                  onTap: () =>
+                      prefs.setRememberLastUsed(!prefs.rememberLastUsed),
+                  trailing: Switch(
+                    value: prefs.rememberLastUsed,
+                    onChanged: prefs.setRememberLastUsed,
+                  ),
+                ),
+                _row(
+                  icon: Icons.bedtime_outlined,
+                  color: Colors.indigoAccent,
+                  title: 'Late night counts as yesterday',
+                  subtitle: 'Entries added before ${AppPrefs.lateNightCutoffHour} AM are dated the previous day',
+                  chevron: false,
+                  onTap: () => prefs
+                      .setLateNightIsYesterday(!prefs.lateNightIsYesterday),
+                  trailing: Switch(
+                    value: prefs.lateNightIsYesterday,
+                    onChanged: prefs.setLateNightIsYesterday,
+                  ),
+                ),
+              ]),
+
+              _groupLabel('ALERTS & GOALS'),
+              _group([
+                _row(
+                  icon: Icons.flag_outlined,
+                  color: Colors.tealAccent,
+                  title: 'Monthly savings goal',
+                  subtitle: prefs.savingsGoal == null
+                      ? 'Track how much you want left each month'
+                      : '₹${prefs.savingsGoal!.toStringAsFixed(0)} a month · shown in Savings',
+                  onTap: () => _editAmountPref(
+                    title: 'Monthly savings goal',
+                    hint: 'How much you want left at month end',
+                    current: prefs.savingsGoal,
+                    onSave: prefs.setSavingsGoal,
+                  ),
+                ),
+                _row(
+                  icon: Icons.warning_amber_rounded,
+                  color: Colors.deepOrangeAccent,
+                  title: 'Large payment alert',
+                  subtitle: prefs.largePaymentAlert == null
+                      ? 'Get notified about big payments (helps spot fraud)'
+                      : 'For payments of ₹${prefs.largePaymentAlert!.toStringAsFixed(0)} or more · tap to change',
+                  chevron: false,
+                  onTap: () => _editAmountPref(
+                    title: 'Large payment alert',
+                    hint: 'Notify me for payments of at least',
+                    current: prefs.largePaymentAlert ?? 5000,
+                    onSave: prefs.setLargePaymentAlert,
+                  ),
+                  trailing: Switch(
+                    value: prefs.largePaymentAlert != null,
+                    onChanged: (on) => on
+                        ? _editAmountPref(
+                            title: 'Large payment alert',
+                            hint: 'Notify me for payments of at least',
+                            current: 5000,
+                            onSave: prefs.setLargePaymentAlert,
+                          )
+                        : prefs.setLargePaymentAlert(null),
+                  ),
+                ),
+              ]),
+
+              _groupLabel('PRIVACY'),
+              _group([
+                _row(
+                  icon: Icons.lock_outline_rounded,
+                  color: Colors.lightBlueAccent,
+                  title: 'App lock',
+                  subtitle: prefs.appLockEnabled
+                      ? 'PIN on opening and after 30 s away · tap to change PIN'
+                      : 'Ask for a PIN when Vyaya opens',
+                  chevron: false,
+                  onTap: prefs.appLockEnabled
+                      ? _changePin
+                      : () => _setAppLock(true),
+                  trailing: Switch(
+                    value: prefs.appLockEnabled,
+                    onChanged: _setAppLock,
+                  ),
+                ),
+              ]),
+
+              _groupLabel('NOTIFICATIONS & SUMMARIES'),
+              _group([
+                _row(
+                  icon: Icons.calendar_view_week_rounded,
+                  color: Colors.lightGreen,
+                  title: 'Weekly summary',
+                  subtitle: 'Sundays at 1 PM: last week\'s spending, top category, vs the week before',
+                  chevron: false,
+                  onTap: () => prefs.setWeeklySummary(!prefs.weeklySummary),
+                  trailing: Switch(
+                    value: prefs.weeklySummary,
+                    onChanged: prefs.setWeeklySummary,
+                  ),
+                ),
+                _row(
+                  icon: Icons.insights_rounded,
+                  color: Colors.purpleAccent,
+                  title: 'Monthly recap',
+                  subtitle: 'On the 1st at 10 AM: spent, income and what was saved',
+                  chevron: false,
+                  onTap: () => prefs.setMonthlyRecap(!prefs.monthlyRecap),
+                  trailing: Switch(
+                    value: prefs.monthlyRecap,
+                    onChanged: prefs.setMonthlyRecap,
+                  ),
+                ),
+                _row(
+                  icon: Icons.event_note_rounded,
+                  color: Colors.amber,
+                  title: 'Bill reminders',
+                  subtitle: 'The day before a recurring expense (rent, subscriptions…)',
+                  chevron: false,
+                  onTap: () => prefs.setBillReminders(!prefs.billReminders),
+                  trailing: Switch(
+                    value: prefs.billReminders,
+                    onChanged: prefs.setBillReminders,
+                  ),
+                ),
+                _row(
+                  icon: Icons.speed_rounded,
+                  color: Colors.orangeAccent,
+                  title: 'Early warnings',
+                  subtitle: 'Alert at 80% of your income or a category limit, before you go over',
+                  chevron: false,
+                  onTap: () => prefs.setEarlyWarnings(!prefs.earlyWarnings),
+                  trailing: Switch(
+                    value: prefs.earlyWarnings,
+                    onChanged: prefs.setEarlyWarnings,
+                  ),
+                ),
+                _row(
+                  icon: Icons.alarm_rounded,
+                  color: Colors.orangeAccent,
+                  title: 'Daily reminder',
+                  subtitle: reminder == null
+                      ? 'A nudge to log the day\'s spending'
+                      : 'Every day at ${_formatMinutes(reminder)} · tap to change',
+                  chevron: false,
+                  onTap: () => reminder == null
+                      ? _setReminder(true)
+                      : _pickReminderTime(reminder),
+                  trailing: Switch(
+                    value: reminder != null,
+                    onChanged: _setReminder,
+                  ),
+                ),
+              ]),
+      ],
+    );
+  }
+
+  // ==================== OPTIONAL FEATURES ====================
+
+  static String _shortcutName(QuickShortcut s) => switch (s) {
+        QuickShortcut.detected => 'Detected Payments',
+        QuickShortcut.lentBorrowed => 'Lent & Borrowed',
+        QuickShortcut.recurring => 'Recurring',
+      };
+
+  static IconData _shortcutIcon(QuickShortcut s) => switch (s) {
+        QuickShortcut.detected => Icons.bolt_rounded,
+        QuickShortcut.lentBorrowed => Icons.handshake_outlined,
+        QuickShortcut.recurring => Icons.repeat_rounded,
+      };
+
+  static Color _shortcutColor(QuickShortcut s) => switch (s) {
+        QuickShortcut.detected => Colors.teal,
+        QuickShortcut.lentBorrowed => Colors.amber,
+        QuickShortcut.recurring => Colors.cyan,
+      };
+
+  /// Settings row for the shortcut that's not in the quick actions sheet.
+  Widget _shortcutRow(
+      QuickShortcut s, ExpenseProvider ep, CaptureProvider cap) {
+    final Widget screen;
+    final String subtitle;
+    Widget? trailing;
+    switch (s) {
+      case QuickShortcut.recurring:
+        final active = ep.recurringEntries.where((r) => r.active).length;
+        screen = const RecurringScreen();
+        subtitle = active == 0
+            ? 'Weekly, monthly or yearly income and bills'
+            : '$active active';
+      case QuickShortcut.detected:
+        screen = const DetectedPaymentsScreen();
+        subtitle = 'From bank SMS & payment apps';
+        if (cap.pendingCount > 0) {
+          trailing = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _badge(cap.pendingCount),
+              const Icon(Icons.chevron_right, color: Colors.grey),
+            ],
+          );
+        }
+      case QuickShortcut.lentBorrowed:
+        screen = const LentBorrowedScreen();
+        subtitle = 'Money with friends';
     }
-    final hasSaved = provider.expenses.any(ExpenseProvider.isAutoSavedEntry);
-    if (!hasSaved) {
-      await provider.setMonthEndSavings(false);
-      return;
-    }
-    final choice = await showDialog<String>(
+    return _row(
+      icon: _shortcutIcon(s),
+      color: _shortcutColor(s),
+      title: _shortcutName(s),
+      subtitle: subtitle,
+      trailing: trailing,
+      onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (context) => screen)),
+    );
+  }
+
+  Widget _pill(String text) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.lightBlue.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(text,
+            style: const TextStyle(
+                color: Colors.lightBlue,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600)),
+      );
+
+  /// Picks which of the three shortcuts stays in Settings; the other two go
+  /// in the swipe-up sheet between Analytics and Settings.
+  void _showQuickActionsPicker() {
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
+      backgroundColor: const Color(0xFF1A1A1A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => ListenableBuilder(
+        listenable: AppPrefs.instance,
+        builder: (context, _) {
+          final inSettings = AppPrefs.instance.shortcutInSettings;
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[700],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Quick actions',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Swiping up on the nav bar shows Analytics, two shortcuts and Settings. Choose the one to keep in Settings instead.',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 13),
+                  ),
+                  const SizedBox(height: 12),
+                  for (final s in QuickShortcut.values)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      onTap: () => AppPrefs.instance.setShortcutInSettings(s),
+                      leading: _tileIcon(_shortcutIcon(s), _shortcutColor(s)),
+                      title: Text(_shortcutName(s),
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w500)),
+                      subtitle: Text(
+                          s == inSettings ? 'In Settings' : 'In quick actions',
+                          style: TextStyle(
+                              color: s == inSettings
+                                  ? Colors.grey
+                                  : Colors.greenAccent,
+                              fontSize: 12.5)),
+                      trailing: Icon(
+                        s == inSettings
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_unchecked,
+                        color: s == inSettings
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.grey,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// App lock switch: on runs the PIN setup; off asks for the PIN first.
+  Future<void> _setAppLock(bool on) async {
+    final navigator = Navigator.of(context);
+    if (on) {
+      await navigator.push<bool>(MaterialPageRoute(
+          builder: (context) => const AppLockSetupScreen()));
+      return;
+    }
+    final ok = await _confirmPin();
+    if (ok) await AppLock.disable();
+  }
+
+  Future<void> _changePin() async {
+    if (!await _confirmPin() || !mounted) return;
+    await Navigator.of(context).push<bool>(
+        MaterialPageRoute(builder: (context) => const AppLockSetupScreen()));
+  }
+
+  /// Full-screen PIN check; true if the right PIN was entered.
+  Future<bool> _confirmPin() async {
+    final ok = await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (ctx) => PinScreen(
+        mode: PinMode.verify,
+        onCancel: () => Navigator.pop(ctx, false),
+        onDone: (_) => Navigator.pop(ctx, true),
+      ),
+    ));
+    return ok == true;
+  }
+
+  /// Small dialog to set (or clear) an amount-based optional feature.
+  Future<void> _editAmountPref({
+    required String title,
+    required String hint,
+    required double? current,
+    required Future<void> Function(double?) onSave,
+  }) async {
+    final controller = TextEditingController(
+        text: current == null ? '' : current.toStringAsFixed(0));
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF2A2A2A),
-        title: const Text('Turn off month-end savings?',
-            style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'Leftover money won\'t go into "Saved" any more. What about the Saved entries already made?',
-          style: TextStyle(color: Colors.white70),
+        title: Text(title, style: const TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(labelText: hint, prefixText: '₹ '),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, 'remove'),
-            child: const Text('Remove them',
+            onPressed: () => Navigator.pop(ctx, '__off__'),
+            child: const Text('Turn off',
                 style: TextStyle(color: Colors.redAccent)),
           ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, 'keep'),
-            child: const Text('Keep them'),
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('Save'),
           ),
         ],
       ),
     );
-    if (choice == null) return;
-    await provider.setMonthEndSavings(false, removeExisting: choice == 'remove');
-    messenger.showSnackBar(SnackBar(
-      content: Text(choice == 'remove'
-          ? 'Month-end savings off · Saved entries removed'
-          : 'Month-end savings off'),
-    ));
+    if (result == null) return; // cancelled
+    if (result == '__off__') {
+      await onSave(null);
+      return;
+    }
+    final v = double.tryParse(result.trim());
+    await onSave(v == null || v <= 0 ? null : v);
+  }
+
+  static String _formatMinutes(int minutes) {
+    final h = minutes ~/ 60, m = minutes % 60;
+    final h12 = h % 12 == 0 ? 12 : h % 12;
+    return '$h12:${m.toString().padLeft(2, '0')} ${h < 12 ? 'AM' : 'PM'}';
+  }
+
+  /// Daily reminder switch. Turning it on asks for a time (9:00 PM default).
+  Future<void> _setReminder(bool on) async {
+    if (!on) {
+      await AppPrefs.instance.setReminderMinutes(null);
+      await NotificationService.syncDailyReminder(null);
+      return;
+    }
+    await _pickReminderTime(21 * 60);
+  }
+
+  Future<void> _pickReminderTime(int current) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: current ~/ 60, minute: current % 60),
+      helpText: 'Remind me every day at',
+    );
+    if (picked == null) return;
+    final minutes = picked.hour * 60 + picked.minute;
+    await AppPrefs.instance.setReminderMinutes(minutes);
+    await NotificationService.syncDailyReminder(minutes);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Reminder set for ${_formatMinutes(minutes)} daily')));
+    }
+  }
+
+  /// Opens the GitHub Releases page in the browser. Vyaya itself makes no
+  /// network request; the browser app loads the page.
+  Future<void> _openReleases() async {
+    final messenger = ScaffoldMessenger.of(context);
+    var ok = false;
+    try {
+      ok = await launchUrl(Uri.parse(AppPrefs.releasesUrl),
+          mode: LaunchMode.externalApplication);
+    } catch (_) {}
+    if (!ok) {
+      messenger.showSnackBar(const SnackBar(
+          content: Text('No browser found to open GitHub Releases')));
+    }
   }
 
   /// Asks how far back to import bank SMS. Returns the start date, or null.
@@ -2286,7 +2884,7 @@ class _LoggedExpensesDialogState extends State<_LoggedExpensesDialog> {
 
     return AlertDialog(
       backgroundColor: const Color(0xFF2A2A2A),
-      title: const Text('Expenses already logged',
+      title: const Text('Entries already logged',
           style: TextStyle(color: Colors.white)),
       content: SizedBox(
         width: double.maxFinite,
@@ -2297,8 +2895,8 @@ class _LoggedExpensesDialogState extends State<_LoggedExpensesDialog> {
             children: [
               Text(
                 single
-                    ? '"${widget.affected.first.name}" has $total logged ${total == 1 ? 'expense' : 'expenses'}. Delete anyway?'
-                    : 'These categories have $total logged expenses. Delete anyway?',
+                    ? '"${widget.affected.first.name}" has $total logged ${total == 1 ? 'entry' : 'entries'} (expenses and recurring). Delete anyway?'
+                    : 'These categories have $total logged entries (expenses and recurring). Delete anyway?',
                 style: const TextStyle(color: Colors.white),
               ),
               const SizedBox(height: 16),
@@ -2309,7 +2907,7 @@ class _LoggedExpensesDialogState extends State<_LoggedExpensesDialog> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '${cat.name} · ${widget.counts[cat.name]} ${widget.counts[cat.name] == 1 ? 'expense' : 'expenses'}',
+                        '${cat.name} · ${widget.counts[cat.name]} ${widget.counts[cat.name] == 1 ? 'entry' : 'entries'}',
                         style: const TextStyle(
                             color: Colors.white, fontWeight: FontWeight.w600),
                       ),
@@ -2323,7 +2921,7 @@ class _LoggedExpensesDialogState extends State<_LoggedExpensesDialog> {
                   dropdownColor: const Color(0xFF1E1E1E),
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    labelText: 'Move expenses to',
+                    labelText: 'Move entries to',
                     labelStyle: TextStyle(color: Colors.grey.shade400),
                     isDense: true,
                     border: OutlineInputBorder(
@@ -2511,4 +3109,134 @@ String? _singleEmoji(String input) {
   final last = chars.last;
   if (RegExp(r'^[A-Za-z0-9\p{P}]+$', unicode: true).hasMatch(last)) return null;
   return last;
+}
+
+/// A horizontally scrolling row with small arrows at the edges that show
+/// when there's more to scroll that way (tap one to scroll a step).
+class _ScrollArrowsRow extends StatefulWidget {
+  final List<Widget> children;
+  final double height;
+  final Color fadeColor;
+  final int initialIndex;
+
+  const _ScrollArrowsRow({
+    required this.children,
+    required this.height,
+    required this.fadeColor,
+    this.initialIndex = 0,
+  });
+
+  @override
+  State<_ScrollArrowsRow> createState() => _ScrollArrowsRowState();
+}
+
+class _ScrollArrowsRowState extends State<_ScrollArrowsRow> {
+  final _controller = ScrollController();
+  late final List<GlobalKey> _keys =
+      List.generate(widget.children.length, (_) => GlobalKey());
+  bool _canLeft = false;
+  bool _canRight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_update);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // Bring the selected chip into view (e.g. when editing a category
+      // whose icon is in a later group).
+      final i = widget.initialIndex;
+      final ctx = (i > 0 && i < _keys.length) ? _keys[i].currentContext : null;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx,
+            alignment: 0.5, duration: Duration.zero);
+      }
+      _update();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _update() {
+    if (!_controller.hasClients) return;
+    final p = _controller.position;
+    final left = p.pixels > 1;
+    final right = p.pixels < p.maxScrollExtent - 1;
+    if (left != _canLeft || right != _canRight) {
+      setState(() {
+        _canLeft = left;
+        _canRight = right;
+      });
+    }
+  }
+
+  void _step(double direction) {
+    if (!_controller.hasClients) return;
+    final p = _controller.position;
+    final target = (p.pixels + direction * p.viewportDimension * 0.6)
+        .clamp(0.0, p.maxScrollExtent);
+    _controller.animateTo(target,
+        duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+  }
+
+  Widget _arrow({required bool left}) => Positioned(
+        left: left ? 0 : null,
+        right: left ? null : 0,
+        top: 0,
+        bottom: 0,
+        child: GestureDetector(
+          onTap: () => _step(left ? -1 : 1),
+          child: Container(
+            width: 28,
+            alignment: left ? Alignment.centerLeft : Alignment.centerRight,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: left ? Alignment.centerLeft : Alignment.centerRight,
+                end: left ? Alignment.centerRight : Alignment.centerLeft,
+                colors: [
+                  widget.fadeColor,
+                  widget.fadeColor.withValues(alpha: 0),
+                ],
+              ),
+            ),
+            child: Icon(
+              left ? Icons.chevron_left_rounded : Icons.chevron_right_rounded,
+              size: 18,
+              color: Colors.white70,
+            ),
+          ),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: widget.height,
+      child: NotificationListener<ScrollMetricsNotification>(
+        // Re-check when the content size changes (first layout, rotation).
+        onNotification: (_) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _update());
+          return false;
+        },
+        child: Stack(
+          children: [
+            ListView(
+              controller: _controller,
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (var i = 0; i < widget.children.length; i++)
+                  KeyedSubtree(key: _keys[i], child: widget.children[i]),
+              ],
+            ),
+            if (_canLeft) _arrow(left: true),
+            if (_canRight) _arrow(left: false),
+          ],
+        ),
+      ),
+    );
+  }
 }

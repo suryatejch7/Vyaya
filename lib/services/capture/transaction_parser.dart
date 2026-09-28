@@ -68,7 +68,7 @@ class TransactionParser {
   static final _request = _ci(
       r"\b(requested\s*(money|₹|rs|inr)|has\s*requested|collect\s*request|payment\s*request|request\s*(of|for)\s*(₹|rs|inr)|is\s*requesting)\b");
   static final _movement = _ci(
-      r"\b(debited|debit|credited|credit|spent|paid|withdrawn|withdrawal|purchase|deducted|sent|transferred|transfer|received|refund|refunded|deposited|deposit|transaction|txn|used\s*(for|at)|payment\s*of|reversed|reversal|cashback|salary|interest|thank\s*you\s*for\s*using|dr(?=\.?\s+from)|cr(?=\.?\s+to))\b");
+      r"\b(recharged?\b(?=[^.]{0,80}?\b(?:successful(?:ly)?|done|completed|success)\b)|successfully\s+recharged|debited|debit|credited|credit|spent|paid|withdrawn|withdrawal|purchase|deducted|sent|transferred|transfer|received|refund|refunded|deposited|deposit|transaction|txn|used\s*(for|at)|payment\s*of|reversed|reversal|cashback|salary|interest|thank\s*you\s*for\s*using|dr(?=\.?\s+from)|cr(?=\.?\s+to))\b");
 
   // ---------------- amount ----------------
   static final _amountPrefixed = _ci(_cur + r"\s*" + _num);
@@ -83,7 +83,7 @@ class TransactionParser {
   static final _creditWords = _ci(
       r"\b(paid\s*you|sent\s*you|you\s*(have\s*)?received|received\s*(₹|rs|inr|from|money)|money\s*received|credited|refund(ed)?|reversed|reversal|deposited|cashback|salary|interest\s*(credited|of)|dividend)\b");
   static final _debitWords = _ci(
-      r"\b(debited|debit|spent|paid|withdrawn|withdrawal|purchase|deducted|sent|transferred|used\s*(for|at)|payment\s*of|charged|emi|thank\s*you\s*for\s*using|(?:txn|transaction)\s+of|dr(?=\.?\s+from))\b");
+      r"\b(recharged?\b(?=[^.]{0,80}?\b(?:successful(?:ly)?|done|completed|success)\b)|successfully\s+recharged|debited|debit|spent|paid|withdrawn|withdrawal|purchase|deducted|sent|transferred|used\s*(for|at)|payment\s*of|charged|emi|thank\s*you\s*for\s*using|(?:txn|transaction)\s+of|dr(?=\.?\s+from))\b");
   static final _moneyBack = _ci(r"\b(reversed|refunded|credited\s*back)\b");
 
   // ---------------- account digits / reference ----------------
@@ -119,6 +119,9 @@ class TransactionParser {
     _ci(r"\b(?:payee|beneficiary|merchant|remitter|sender|biller)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9&.' \-]{1,40})"),
     _ci(r";\s*([A-Za-z][A-Za-z0-9&.' \-]{1,40}?)\s+credited\b"),
     _ci(r"\btrf\s+to\s+([A-Za-z0-9][A-Za-z0-9&.' \-]{1,40})"),
+    // mobile / DTH recharges: "Your Jio number … recharged", "Recharge … for Airtel"
+    _ci(r"\b(jio|airtel(?:\s*dth)?|vodafone\s*idea|vodafone|vi|bsnl|tata\s*play|dish\s*tv|d2h|sun\s*direct)\b(?=[^.]{0,60}\brecharg)"),
+    _ci(r"\brecharg\w*\b[^.]{0,40}?\b(jio|airtel(?:\s*dth)?|vodafone\s*idea|vodafone|vi|bsnl|tata\s*play|dish\s*tv|d2h|sun\s*direct)\b"),
     // merchant receipts: "Thank you for shopping at DMart", "…for choosing Croma"
     _ci(r"\bthanks?\s*(?:you\s*)?for\s+(?:shopping|dining|choosing|visiting|ordering)\s+(?:at\s+|with\s+|from\s+)?([A-Za-z0-9][A-Za-z0-9&.' \-]{1,40})"),
   ];
@@ -149,6 +152,7 @@ class TransactionParser {
   static final _creditedWord = _ci(r"\bcredited\b");
   static final _withdrawal = _ci(r"\b(withdrawn|withdrawal)\b");
   static final _atm = _ci(r"\batm\b");
+  static final _rechargeWord = _ci(r"\brecharg");
 
   // Credit card bill payments. The card's "payment received" message isn't
   // income, and the bank's "debited towards CC payment" isn't new spending:
@@ -218,7 +222,11 @@ class TransactionParser {
     if (isDebit == null) return ParseResult.reject('no-direction');
 
     final allLast4 = _extractAllLast4(text);
-    final merchant = _extractMerchant(text);
+    var merchant = _extractMerchant(text);
+    // A recharge with no operator name still gets a readable title.
+    if (merchant == null && isDebit && _rechargeWord.hasMatch(text)) {
+      merchant = 'Mobile recharge';
+    }
 
     // Card bill: the card-side "payment received" is dropped; the bank-side
     // debit is kept but flagged so it's never auto-added.

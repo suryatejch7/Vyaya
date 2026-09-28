@@ -68,8 +68,10 @@ class _GlassBottomSheetState extends State<GlassBottomSheet>
             child: Align(
               alignment: Alignment.bottomCenter,
               child: Container(
-                margin: const EdgeInsets.all(20),
-                width: screenWidth - 40,
+                // Only 8 dp side margins so the sheet fully covers the nav
+                // bar and the + / filter button (16 dp from each edge).
+                margin: const EdgeInsets.fromLTRB(8, 20, 8, 20),
+                width: screenWidth - 16,
                 height: finalHeight,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(25),

@@ -150,16 +150,6 @@ class LocalStore {
     await _saveSettings(settings.userId, settings);
   }
 
-  static Future<void> updateMonthlyBudget(double budget,
-      {required int userId}) async {
-    final settings = await getUserSettings(userId: userId);
-    final updated = settings.copyWith(
-      monthlyBudget: budget,
-      updatedAt: DateTime.now(),
-    );
-    await _saveSettings(userId, updated);
-  }
-
   static Future<void> updateCategoryBudget(String categoryId, double budget,
       {required int userId}) async {
     final settings = await getUserSettings(userId: userId);

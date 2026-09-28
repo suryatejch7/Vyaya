@@ -9,6 +9,8 @@ import '../providers/expense_provider.dart';
 import '../providers/user_provider.dart';
 import '../providers/capture_provider.dart';
 import 'local_store.dart';
+import 'app_prefs.dart';
+import 'notification_service.dart';
 
 /// Full JSON backup & restore of all app data.
 ///
@@ -180,6 +182,9 @@ class BackupService {
       }
       await userProvider.initializeExpenseProvider(expenseProvider);
       await captureProvider.reload(); // detected payments from the backup
+      // Optional features came back too: re-schedule the daily reminder.
+      await AppPrefs.instance
+          .reloadAfterDataChange(NotificationService.syncDailyReminder);
 
       // Keep the shadow auto-backup in sync with what was just restored.
       await autoSave();

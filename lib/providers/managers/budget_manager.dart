@@ -2,22 +2,16 @@ import 'package:flutter/material.dart';
 import '../../models/expense_models.dart';
 import '../../services/local_store.dart';
 
+/// Per-category monthly limits (the overall monthly budget was replaced by
+/// income tracking).
 class BudgetManager {
   final Map<String, double> _categoryBudgets = {};
-  double _monthlyBudget = 25000.0;
 
-  double get monthlyBudget => _monthlyBudget;
   Map<String, double> get categoryBudgets => _categoryBudgets;
 
-  void initialize(double monthlyBudget, Map<String, double> categoryBudgets) {
-    _monthlyBudget = monthlyBudget;
+  void initialize(Map<String, double> categoryBudgets) {
     _categoryBudgets.clear();
     _categoryBudgets.addAll(categoryBudgets);
-  }
-
-  Future<void> updateMonthlyBudget(double budget, int userId) async {
-    await LocalStore.updateMonthlyBudget(budget, userId: userId);
-    _monthlyBudget = budget;
   }
 
   double getCategoryBudget(
@@ -38,40 +32,6 @@ class BudgetManager {
       return _categoryBudgets[customCategory.id] ?? 0.0;
     }
     return 0.0;
-  }
-
-  Future<void> setCategoryBudget(
-    String categoryName,
-    double budget,
-    List<ExpenseCategory> customCategories,
-    int userId,
-  ) async {
-    String categoryId = '';
-
-    final customCategory = customCategories.firstWhere(
-      (cat) => cat.name == categoryName,
-      orElse: () => ExpenseCategory(
-        id: '',
-        name: '',
-        icon: '',
-        color: Colors.transparent,
-      ),
-    );
-
-    if (customCategory.id.isNotEmpty) {
-      categoryId = customCategory.id;
-    }
-
-    if (categoryId.isEmpty) {
-      throw Exception('Category not found: $categoryName');
-    }
-
-    await LocalStore.updateCategoryBudget(
-      categoryId,
-      budget,
-      userId: userId,
-    );
-    _categoryBudgets[categoryId] = budget;
   }
 
   double getCustomCategoryBudget(String categoryId) {
@@ -109,19 +69,5 @@ class BudgetManager {
     return currentMonthCategoryExpenses - budget;
   }
 
-  // Budget-related computed values
-  bool isOverBudget(double currentMonthTotal) =>
-      currentMonthTotal > _monthlyBudget;
-  double budgetExcess(double currentMonthTotal) =>
-      currentMonthTotal - _monthlyBudget;
-  double budgetRemaining(double currentMonthTotal) =>
-      _monthlyBudget - currentMonthTotal;
-  double budgetUsagePercentage(double currentMonthTotal) =>
-      _monthlyBudget > 0 ? (currentMonthTotal / _monthlyBudget) * 100 : 0;
-
-  /// Clear all data
-  void clear() {
-    _categoryBudgets.clear();
-    _monthlyBudget = 25000.0;
-  }
+  void clear() => _categoryBudgets.clear();
 }

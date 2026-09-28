@@ -7,18 +7,22 @@ class ExpandableFab extends StatefulWidget {
   final VoidCallback onAddIncome;
   final VoidCallback? onScanReceipt;
 
+  /// Told when the menu opens or closes (the screen dims behind it).
+  final ValueChanged<bool>? onOpenChanged;
+
   const ExpandableFab({
     super.key,
     required this.onAddExpense,
     required this.onAddIncome,
     this.onScanReceipt,
+    this.onOpenChanged,
   });
 
   @override
-  State<ExpandableFab> createState() => _ExpandableFabState();
+  State<ExpandableFab> createState() => ExpandableFabState();
 }
 
-class _ExpandableFabState extends State<ExpandableFab>
+class ExpandableFabState extends State<ExpandableFab>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _rotateAnimation;
@@ -59,7 +63,11 @@ class _ExpandableFabState extends State<ExpandableFab>
         _controller.reverse();
       }
     });
+    widget.onOpenChanged?.call(_isOpen);
   }
+
+  /// Closes the menu (used by the screen when you tap outside it).
+  void close() => _close();
 
   void _close() {
     if (_isOpen) {
@@ -67,6 +75,7 @@ class _ExpandableFabState extends State<ExpandableFab>
         _isOpen = false;
         _controller.reverse();
       });
+      widget.onOpenChanged?.call(false);
     }
   }
 
@@ -77,6 +86,7 @@ class _ExpandableFabState extends State<ExpandableFab>
         _isOpen = false;
         _controller.reset();
       });
+      widget.onOpenChanged?.call(false);
     }
   }
 

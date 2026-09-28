@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/expense_provider.dart';
 import '../models/expense_models.dart';
 import '../screens/categories_screen.dart';
+import '../services/app_prefs.dart';
 
 class CategorySummary extends StatefulWidget {
   const CategorySummary({super.key});
@@ -15,6 +16,14 @@ class _CategorySummaryState extends State<CategorySummary> {
 
   @override
   Widget build(BuildContext context) {
+    // Rebuilds when "Hide totals on Home" is toggled.
+    return ListenableBuilder(
+      listenable: AppPrefs.instance,
+      builder: (context, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     return Consumer<ExpenseProvider>(
       builder: (context, expenseProvider, child) {
         // Use current month data instead of all-time
@@ -70,11 +79,23 @@ class _CategorySummaryState extends State<CategorySummary> {
                     padding: const EdgeInsets.only(right: 16),
                     child: GestureDetector(
                       onTap: () {
+                        // Open the month being viewed on Home, not always
+                        // the current one.
+                        final m = expenseProvider.viewMonth;
+                        final isCurrent = expenseProvider.isViewingCurrentMonth;
                         Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (context) => CategoryDetailScreen(
                               categoryName: categoryName,
-                              filterPeriod: FilterPeriod.monthly,
+                              filterPeriod: isCurrent
+                                  ? FilterPeriod.monthly
+                                  : FilterPeriod.custom,
+                              customStartDate: isCurrent
+                                  ? null
+                                  : DateTime(m.year, m.month, 1),
+                              customEndDate: isCurrent
+                                  ? null
+                                  : DateTime(m.year, m.month + 1, 0),
                             ),
                           ),
                         );
@@ -126,7 +147,9 @@ class _CategorySummaryState extends State<CategorySummary> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '$currency${amount.toStringAsFixed(0)}',
+                            AppPrefs.instance.hideHomeTotals
+                                ? '$currency••••'
+                                : '$currency${amount.toStringAsFixed(0)}',
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.bold,

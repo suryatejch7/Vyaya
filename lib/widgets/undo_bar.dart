@@ -16,8 +16,9 @@ class UndoHost extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         child,
+        // Same spot as the (left-aligned) nav bar.
         Positioned(
-          left: 0,
+          left: 16,
           right: 0,
           // Stay above the keyboard when one is open.
           bottom: 30 + MediaQuery.of(context).viewInsets.bottom,
@@ -39,8 +40,9 @@ class UndoHost extends StatelessWidget {
               ),
               child: request == null
                   ? const SizedBox.shrink(key: ValueKey('no-undo'))
-                  : Center(
+                  : Align(
                       key: ValueKey(request.id),
+                      alignment: Alignment.centerLeft,
                       child: _UndoPill(request: request),
                     ),
             ),
@@ -122,6 +124,7 @@ class _UndoPillState extends State<_UndoPill>
 
   Widget _buildPill(Color primary) {
     return Transform.scale(
+      alignment: Alignment.centerLeft,
       scale: 0.9,
       child: Material(
         type: MaterialType.transparency,

@@ -102,6 +102,10 @@ class Income {
   final DateTime date;
   final String? notes;
   final String? accountId;
+
+  /// Marks an entry the app made itself, e.g. "auto-carry-2026-09" for
+  /// September's leftover carried into October. Null for your own entries.
+  final String? tag;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -113,6 +117,7 @@ class Income {
     required this.date,
     this.notes,
     this.accountId,
+    this.tag,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -126,6 +131,7 @@ class Income {
       date: DateTime.parse(data['date']),
       notes: data['notes'],
       accountId: data['account_id'],
+      tag: data['tag'],
       createdAt: DateTime.parse(data['created_at']),
       updatedAt: DateTime.parse(data['updated_at']),
     );
@@ -140,6 +146,7 @@ class Income {
       'date': date.toIso8601String(),
       'notes': notes,
       'account_id': accountId,
+      if (tag != null) 'tag': tag,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
@@ -153,6 +160,7 @@ class Income {
     DateTime? date,
     String? notes,
     String? accountId,
+    String? tag,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -164,6 +172,7 @@ class Income {
       date: date ?? this.date,
       notes: notes ?? this.notes,
       accountId: accountId ?? this.accountId,
+      tag: tag ?? this.tag,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

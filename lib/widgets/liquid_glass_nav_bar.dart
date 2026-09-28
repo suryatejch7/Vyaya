@@ -11,6 +11,8 @@ import 'package:provider/provider.dart';
 import '../providers/capture_provider.dart';
 import '../screens/detected_payments_screen.dart';
 import '../screens/lent_borrowed_screen.dart';
+import '../screens/recurring_screen.dart';
+import '../services/app_prefs.dart';
 
 class GlassNavBar extends StatefulWidget {
   final int currentIndex;
@@ -149,43 +151,9 @@ class _GlassNavBarState extends State<GlassNavBar>
           );
         },
       ),
-      // Recurring lives in Settings; detected payments are reviewed often,
-      // so they get the shortcut.
-      QuickActionItem(
-        id: 'detected',
-        icon: Icons.bolt_rounded,
-        title: 'Detected Payments',
-        subtitle: switch (context.read<CaptureProvider>().pendingCount) {
-          0 => 'From bank SMS & payment apps',
-          1 => '1 waiting for review',
-          final n => '$n waiting for review',
-        },
-        color: Colors.teal,
-        onTap: () {
-          Navigator.pop(context);
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (context) => const DetectedPaymentsScreen()),
-          );
-        },
-      ),
-      QuickActionItem(
-        id: 'lent_borrowed',
-        icon: Icons.handshake_outlined,
-        title: 'Lent & Borrowed',
-        subtitle: 'Money with friends',
-        color: Colors.amber,
-        onTap: () {
-          Navigator.pop(context);
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const LentBorrowedScreen(),
-            ),
-          );
-        },
-      ),
+      // Two of Detected Payments / Lent & Borrowed / Recurring, picked in
+      // Settings → Optional features (the third is listed in Settings).
+      for (final s in AppPrefs.instance.shortcutsInSheet) _shortcutItem(s),
       QuickActionItem(
         id: 'settings',
         icon: Icons.settings_outlined,
@@ -201,6 +169,47 @@ class _GlassNavBarState extends State<GlassNavBar>
         },
       ),
     ];
+  }
+
+  void _openFromSheet(Widget screen) {
+    Navigator.pop(context);
+    Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
+  }
+
+  QuickActionItem _shortcutItem(QuickShortcut s) {
+    switch (s) {
+      case QuickShortcut.detected:
+        return QuickActionItem(
+          id: 'detected',
+          icon: Icons.bolt_rounded,
+          title: 'Detected Payments',
+          subtitle: switch (context.read<CaptureProvider>().pendingCount) {
+            0 => 'From bank SMS & payment apps',
+            1 => '1 waiting for review',
+            final n => '$n waiting for review',
+          },
+          color: Colors.teal,
+          onTap: () => _openFromSheet(const DetectedPaymentsScreen()),
+        );
+      case QuickShortcut.lentBorrowed:
+        return QuickActionItem(
+          id: 'lent_borrowed',
+          icon: Icons.handshake_outlined,
+          title: 'Lent & Borrowed',
+          subtitle: 'Money with friends',
+          color: Colors.amber,
+          onTap: () => _openFromSheet(const LentBorrowedScreen()),
+        );
+      case QuickShortcut.recurring:
+        return QuickActionItem(
+          id: 'recurring',
+          icon: Icons.repeat_rounded,
+          title: 'Recurring',
+          subtitle: 'Weekly, monthly or yearly',
+          color: Colors.cyan,
+          onTap: () => _openFromSheet(const RecurringScreen()),
+        );
+    }
   }
 
   void _handleHorizontalSwipe(DragEndDetails details) {
@@ -230,9 +239,11 @@ class _GlassNavBarState extends State<GlassNavBar>
 
   @override
   Widget build(BuildContext context) {
+    // Left-aligned so the + button (Home) or the filter button (Categories)
+    // sits on the same row at the right.
     return Positioned(
       bottom: 30,
-      left: 0,
+      left: 16,
       right: 0,
       child: ValueListenableBuilder<UndoRequest?>(
         valueListenable: UndoController.current,
@@ -242,16 +253,18 @@ class _GlassNavBarState extends State<GlassNavBar>
           duration: const Duration(milliseconds: 200),
           child: IgnorePointer(ignoring: undo != null, child: child),
         ),
-        child: Center(
+        child: Align(
+        alignment: Alignment.centerLeft,
         child: AnimatedBuilder(
           animation: Listenable.merge([_scaleAnimation, _swipeAnimation]),
           builder: (context, child) {
             return Transform.scale(
+              alignment: Alignment.centerLeft, // keep the left edge fixed
               scale: _scaleAnimation.value * 0.9, // Scale down the nav bar
               child: GestureDetector(
                 onHorizontalDragEnd: _handleHorizontalSwipe,
-                // Swipe up anywhere on the bar -> Analytics / Detected
-                // Payments / Lent & Borrowed / Settings sheet.
+                // Swipe up anywhere on the bar -> quick actions sheet
+                // (Analytics, two chosen shortcuts, Settings).
                 onVerticalDragEnd: (details) {
                   if (widget.isSelectionMode) return;
                   final v = details.primaryVelocity;

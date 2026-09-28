@@ -94,14 +94,15 @@ class _DetectedPaymentsScreenState extends State<DetectedPaymentsScreen> {
 
   Future<void> _dismissMany(CaptureProvider cap, Iterable<String> ids) async {
     final done = await cap.dismissAll(only: ids);
-    setState(_selected.clear);
+    // The undo still shows if you left the screen while it ran.
+    if (mounted) setState(_selected.clear);
     showUndo('Dismissed ${_payments(done.length)}', () => cap.restoreMany(done));
   }
 
   Future<void> _addMany(CaptureProvider cap, Iterable<String> ids,
       {required bool skipFlagged}) async {
     final r = await cap.acceptAll(only: ids, skipFlagged: skipFlagged);
-    setState(_selected.clear);
+    if (mounted) setState(_selected.clear);
     final left = r.skipped == 0
         ? ''
         : ' · ${r.skipped} transfer/card bill left to review';

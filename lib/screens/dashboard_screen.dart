@@ -9,6 +9,8 @@ import 'detected_payments_screen.dart';
 import '../widgets/expense_card.dart';
 import '../widgets/income_card.dart';
 import '../widgets/category_summary.dart';
+import '../services/app_prefs.dart';
+import 'savings_screen.dart';
 
 enum RecentViewType { all, creditCard }
 
@@ -132,6 +134,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
+  /// ~200 at normal text size; grows with the pace line and font scale.
+  double _headerHeight(BuildContext context) {
+    final scale = MediaQuery.textScalerOf(context).scale(100) / 100;
+    final base = AppPrefs.instance.showSpendingPace ? 228.0 : 200.0;
+    return (base + (scale - 1) * 150).clamp(base, 380.0);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -143,8 +152,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: CustomScrollView(
           controller: _scrollController,
           slivers: [
-            SliverAppBar(
-              expandedHeight: 200,
+            // Header height follows its content: taller with the optional
+            // pace line or a larger system font, so nothing gets clipped.
+            ListenableBuilder(
+              listenable: AppPrefs.instance,
+              builder: (context, _) => SliverAppBar(
+              expandedHeight: _headerHeight(context),
               pinned: true,
               backgroundColor: Theme.of(context).scaffoldBackgroundColor,
               flexibleSpace: FlexibleSpaceBar(
@@ -182,6 +195,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ),
               ),
+            ),
             ),
             // "N payments detected" banner (auto-detection review queue)
             SliverToBoxAdapter(
@@ -631,9 +645,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     // Filter expenses that are linked to credit card accounts
+    // The automatic "Saved" entry isn't a card payment.
     final ccExpenses = provider.viewMonthExpenses
         .where((e) =>
-            e.accountId != null && creditCardAccountIds.contains(e.accountId))
+            e.accountId != null &&
+            creditCardAccountIds.contains(e.accountId) &&
+            !ExpenseProvider.isAutoSavedEntry(e))
         .toList();
 
     if (ccExpenses.isEmpty) {
@@ -723,7 +740,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '$currency${monthTotal.toStringAsFixed(2)}',
+                          AppPrefs.instance.hideHomeTotals
+                              ? '$currency••••'
+                              : '$currency${monthTotal.toStringAsFixed(2)}',
                           style: const TextStyle(
                             color: Colors.orange,
                             fontSize: 22,
@@ -803,10 +822,18 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
   late Animation<double> _numberAnimation;
   late Animation<double> _progressAnimation;
 
+  /// "Hide totals on Home" is on and you tapped the amount to show it.
+  bool _peek = false;
+
+  void _onPrefsChanged() {
+    if (mounted) setState(() => _peek = false);
+  }
+
   @override
   void initState() {
     super.initState();
     _initializeAnimations();
+    AppPrefs.instance.addListener(_onPrefsChanged);
   }
 
   void _initializeAnimations() {
@@ -839,6 +866,7 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
 
   @override
   void dispose() {
+    AppPrefs.instance.removeListener(_onPrefsChanged);
     _numberController.dispose();
     _progressController.dispose();
     super.dispose();
@@ -855,6 +883,11 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
         final totalExpense = expenseProvider.viewMonthTotalExpense;
         final isCurrent = expenseProvider.isViewingCurrentMonth;
         final currency = expenseProvider.currency;
+        final canHide = AppPrefs.instance.hideHomeTotals;
+        final hidden = canHide && !_peek;
+        // Masks a figure while totals are hidden.
+        String money(double v, int decimals) =>
+            hidden ? '$currency••••' : '$currency${v.toStringAsFixed(decimals)}';
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -881,68 +914,93 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
               ],
             ),
             const SizedBox(height: 4),
-            Row(
-              children: [
-                RepaintBoundary(
-                  child: AnimatedBuilder(
-                    animation: _numberAnimation,
-                    builder: (context, child) {
-                      final animatedValue =
-                          totalExpense * _numberAnimation.value;
-                      return Text(
-                        '$currency${animatedValue.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                          color: isOverBudget
-                              ? Colors.red
-                              : Theme.of(context).colorScheme.primary,
+            GestureDetector(
+              // Tap the amount to show / hide it again.
+              onTap: canHide ? () => setState(() => _peek = !_peek) : null,
+              behavior: HitTestBehavior.opaque,
+              child: Row(
+                children: [
+                  Flexible(
+                  child: RepaintBoundary(
+                    child: AnimatedBuilder(
+                      animation: _numberAnimation,
+                      builder: (context, child) {
+                        final animatedValue =
+                            totalExpense * _numberAnimation.value;
+                        // Shrinks instead of overflowing on narrow screens.
+                        return FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                          money(animatedValue, 2),
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: isOverBudget
+                                ? Colors.red
+                                : Theme.of(context).colorScheme.primary,
+                          ),
                         ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
-                ),
-                if (isOverBudget) ...[
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '+$currency${budgetExcess.toStringAsFixed(0)} over',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                  ),
+                  if (isOverBudget) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        hidden ? 'Over' : '+$currency${budgetExcess.toStringAsFixed(0)} over',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
-                  ),
+                  ],
+                  if (canHide) ...[
+                    const SizedBox(width: 8),
+                    Icon(
+                      hidden
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                      size: 18,
+                      color: Colors.grey[600],
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
             ...[
               const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Income: $currency${totalIncome.toStringAsFixed(0)}',
-                    style: const TextStyle(fontSize: 14, color: Colors.grey),
-                  ),
-                  Text(
-                    isOverBudget
-                        ? '$currency${budgetExcess.toStringAsFixed(0)} over'
-                        : '$currency${left.toStringAsFixed(0)} left',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: isOverBudget ? Colors.red : Colors.green,
-                      fontWeight: FontWeight.w500,
+                  Flexible(
+                    child: Text(
+                      'Income: ${money(totalIncome, 0)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 14, color: Colors.grey),
                     ),
+                  ),
+                  const SizedBox(width: 8),
+                  _leftLabel(
+                    expenseProvider,
+                    isCurrent: isCurrent,
+                    isOver: isOverBudget,
+                    excess: budgetExcess,
+                    left: left,
+                    money: money,
                   ),
                 ],
               ),
@@ -969,9 +1027,96 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
                 ),
               ),
             ],
+            if (isCurrent && AppPrefs.instance.showSpendingPace)
+              _buildPace(expenseProvider, left, totalIncome, money),
           ],
         );
       },
+    );
+  }
+
+  /// Right side of the Income row: "₹X left" this month; for a closed month
+  /// where the leftover went somewhere, "Saved ₹X" / "Carried ₹X" (tap for
+  /// the Savings screen).
+  Widget _leftLabel(
+    ExpenseProvider p, {
+    required bool isCurrent,
+    required bool isOver,
+    required double excess,
+    required double left,
+    required String Function(double, int) money,
+  }) {
+    if (isOver) {
+      return Text('${money(excess, 0)} over',
+          style: const TextStyle(
+              fontSize: 14, color: Colors.red, fontWeight: FontWeight.w500));
+    }
+    final saved = isCurrent ? 0.0 : p.viewMonthSaved;
+    final carried = isCurrent ? 0.0 : p.viewMonthCarriedOut;
+    if (saved <= 0 && carried <= 0) {
+      return Text('${money(left, 0)} left',
+          style: const TextStyle(
+              fontSize: 14, color: Colors.green, fontWeight: FontWeight.w500));
+    }
+    return GestureDetector(
+      onTap: () => Navigator.push(context,
+          MaterialPageRoute(builder: (context) => const SavingsScreen())),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('💰 ', style: TextStyle(fontSize: 13)),
+          Text(
+            saved > 0
+                ? 'Saved ${money(saved, 0)}'
+                : 'Carried over ${money(carried, 0)}',
+            style: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF26A69A),
+                fontWeight: FontWeight.w600),
+          ),
+          const Icon(Icons.chevron_right, size: 16, color: Color(0xFF26A69A)),
+        ],
+      ),
+    );
+  }
+
+  /// Optional "Today ₹X · ₹Y/day for N days" line under the progress bar.
+  Widget _buildPace(ExpenseProvider provider, double left, double income,
+      String Function(double, int) money) {
+    final now = DateTime.now();
+    final today = provider.expenses
+        .where((e) =>
+            e.date.year == now.year &&
+            e.date.month == now.month &&
+            e.date.day == now.day &&
+            !ExpenseProvider.isAutoSavedEntry(e))
+        .fold(0.0, (sum, e) => sum + e.amount);
+    final daysLeft = DateTime(now.year, now.month + 1, 0).day - now.day + 1;
+    final String pace;
+    if (income <= 0) {
+      pace = 'Log income to see a daily budget';
+    } else if (left <= 0) {
+      pace = 'Nothing left to spend this month';
+    } else {
+      pace =
+          '${money(left / daysLeft, 0)}/day for $daysLeft day${daysLeft == 1 ? '' : 's'}';
+    }
+    const style = TextStyle(fontSize: 12.5, color: Colors.grey);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          Text('Today ${money(today, 0)}', style: style),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(pace,
+                style: style,
+                textAlign: TextAlign.right,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
     );
   }
 }

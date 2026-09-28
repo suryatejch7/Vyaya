@@ -22,6 +22,8 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
+  bool _fabOpen = false;
+  final _fabKey = GlobalKey<ExpandableFabState>();
   bool _isSelectionMode = false;
   int _selectedCount = 0;
   VoidCallback? _clearSelection;
@@ -79,10 +81,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // Back: first leaves selection mode, then returns to Home from another
     // tab, and only exits the app from Home.
     return PopScope(
-      canPop: !_isSelectionMode && _currentIndex == 0,
+      canPop: !_isSelectionMode && _currentIndex == 0 && !_fabOpen,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        if (_isSelectionMode) {
+        if (_fabOpen) {
+          _fabKey.currentState?.close();
+        } else if (_isSelectionMode) {
           _clearSelection?.call();
         } else if (_currentIndex != 0) {
           setState(() => _currentIndex = 0);
@@ -108,11 +112,27 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             onClearSelection: _clearSelection,
             onDeleteSelected: _deleteSelected,
           ),
-          if (_currentIndex == 0)
+          // While the + menu is open, a tap anywhere outside it closes it
+          // instead of reaching the list. (No dimming; to dim the screen,
+          // swap the SizedBox for the commented ColoredBox.)
+          if (_fabOpen && _currentIndex == 0)
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _fabKey.currentState?.close(),
+                child: const SizedBox.expand(),
+                // child: const ColoredBox(color: Color(0x66000000)),
+              ),
+            ),
+          // On the nav bar's row, at the right (centred on the bar's height).
+          // Hidden while selecting, when the bar becomes Cancel / Delete.
+          if (_currentIndex == 0 && !_isSelectionMode)
             Positioned(
               right: 16,
-              bottom: 120,
+              bottom: 37,
               child: ExpandableFab(
+                key: _fabKey,
+                onOpenChanged: (open) => setState(() => _fabOpen = open),
                 onAddExpense: () {
                   Navigator.push(
                     context,

@@ -2,7 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/expense_models.dart';
 import '../providers/expense_provider.dart';
+import '../services/app_prefs.dart';
 import 'dart:math' as math;
+
+
+/// 00:00 on the first day of the week containing [d]: Sunday by default,
+/// Monday if chosen in Settings → Optional features.
+DateTime _weekStartOf(DateTime d) => AppPrefs.instance.weekStartOf(d);
+
+/// True if [date] falls in the 7-day week beginning at [start].
+bool _inWeek(DateTime date, DateTime start) {
+  final next = DateTime(start.year, start.month, start.day + 7);
+  return !date.isBefore(start) && date.isBefore(next);
+}
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
@@ -314,23 +326,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final now = DateTime.now();
     switch (_selectedPeriod) {
       case 'Day':
-        // 6 segments of 4 hours
-        return List.generate(6, (i) {
-          final hour = ((5 - i) * 4);
-          final h = (now.hour - hour).clamp(0, 23);
-          return '${h.toString().padLeft(2, '0')}:00';
-        }).reversed.toList();
+        // Today in 6 blocks of 4 hours: 00:00, 04:00 … 20:00.
+        return List.generate(
+            6, (i) => '${(i * 4).toString().padLeft(2, '0')}:00');
       case 'Week':
-        const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-        return List.generate(7, (i) {
-          final date = now.subtract(Duration(days: 6 - i));
-          return days[date.weekday - 1];
-        });
+        // This calendar week, in week order (Sun–Sat or Mon–Sun).
+        return AppPrefs.instance.weekdayLabels;
       case 'Month':
-        return List.generate(4, (i) {
-          final weekEnd = now.subtract(Duration(days: i * 7));
-          return 'W${4 - i}';
-        }).reversed.toList();
+        return List.generate(4, (i) => 'W${4 - i}').reversed.toList();
       case 'Year':
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         return List.generate(6, (i) {
@@ -849,10 +852,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               expense.date.month == now.month &&
               expense.date.day == now.day;
         case 'Week':
-          final weekStart = now.subtract(Duration(days: now.weekday - 1));
-          return expense.date.isAfter(
-            weekStart.subtract(const Duration(days: 1)),
-          );
+          // Calendar week (Sun–Sat, or Mon–Sun if chosen).
+          return _inWeek(expense.date, _weekStartOf(now));
         case 'Month':
           return expense.date.year == now.year &&
               expense.date.month == now.month;
@@ -879,12 +880,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               expense.date.month == yesterday.month &&
               expense.date.day == yesterday.day;
         case 'Week':
-          final lastWeekStart = now.subtract(Duration(days: now.weekday + 6));
-          final lastWeekEnd = now.subtract(Duration(days: now.weekday));
-          return expense.date.isAfter(
-                lastWeekStart.subtract(const Duration(days: 1)),
-              ) &&
-              expense.date.isBefore(lastWeekEnd);
+          final thisWeek = _weekStartOf(now);
+          final lastWeek =
+              DateTime(thisWeek.year, thisWeek.month, thisWeek.day - 7);
+          return _inWeek(expense.date, lastWeek);
         case 'Month':
           final lastMonth = DateTime(now.year, now.month - 1);
           return expense.date.year == lastMonth.year &&
@@ -976,7 +975,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       case 'Day':
         return 'Total today: $currency${periodTotal.toStringAsFixed(0)}';
       case 'Week':
-        final daysInWeek = now.weekday;
+        final daysInWeek =
+            DateTime(now.year, now.month, now.day)
+                    .difference(_weekStartOf(now))
+                    .inDays +
+                1;
         final avg = daysInWeek > 0 ? periodTotal / daysInWeek : 0;
         return 'Average daily spending this week: $currency${avg.toStringAsFixed(0)}';
       case 'Month':
@@ -1002,10 +1005,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               expense.date.month == now.month &&
               expense.date.day == now.day;
         case 'Week':
-          final weekStart = now.subtract(Duration(days: now.weekday - 1));
-          return expense.date.isAfter(
-            weekStart.subtract(const Duration(days: 1)),
-          );
+          // Calendar week (Sun–Sat, or Mon–Sun if chosen).
+          return _inWeek(expense.date, _weekStartOf(now));
         case 'Month':
           return expense.date.year == now.year &&
               expense.date.month == now.month;
@@ -1035,10 +1036,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               expense.date.month == now.month &&
               expense.date.day == now.day;
         case 'Week':
-          final weekStart = now.subtract(Duration(days: now.weekday - 1));
-          return expense.date.isAfter(
-            weekStart.subtract(const Duration(days: 1)),
-          );
+          // Calendar week (Sun–Sat, or Mon–Sun if chosen).
+          return _inWeek(expense.date, _weekStartOf(now));
         case 'Month':
           return expense.date.year == now.year &&
               expense.date.month == now.month;
@@ -1202,22 +1201,24 @@ class SpendingTrendPainter extends CustomPainter {
 
     switch (period) {
       case 'Day':
-        for (int i = 5; i >= 0; i--) {
-          final hourStart = now.subtract(Duration(hours: i * 4));
-          final hourEnd = now.subtract(Duration(hours: (i - 1) * 4));
+        // Today's 4-hour blocks, midnight first (matches the labels).
+        for (int k = 0; k < 6; k++) {
           final hourExpenses = expenses.where((expense) {
             return expense.date.year == now.year &&
                 expense.date.month == now.month &&
                 expense.date.day == now.day &&
-                expense.date.hour >= hourStart.hour &&
-                expense.date.hour < hourEnd.hour;
+                expense.date.hour >= k * 4 &&
+                expense.date.hour < k * 4 + 4;
           });
           dataPoints.add(hourExpenses.fold(0.0, (sum, expense) => sum + expense.amount));
         }
         break;
       case 'Week':
-        for (int i = 6; i >= 0; i--) {
-          final date = now.subtract(Duration(days: i));
+        // Each day of this calendar week, same as the Week total.
+        final weekStart = _weekStartOf(now);
+        for (int i = 0; i < 7; i++) {
+          final date =
+              DateTime(weekStart.year, weekStart.month, weekStart.day + i);
           final dayExpenses = expenses.where((expense) {
             return expense.date.year == date.year &&
                 expense.date.month == date.month &&
@@ -1228,12 +1229,12 @@ class SpendingTrendPainter extends CustomPainter {
         break;
       case 'Month':
         for (int i = 3; i >= 0; i--) {
-          final weekStart = now.subtract(Duration(days: (i + 1) * 7));
-          final weekEnd = now.subtract(Duration(days: i * 7));
-          final weekExpenses = expenses.where((expense) {
-            return expense.date.isAfter(weekStart) &&
-                expense.date.isBefore(weekEnd.add(const Duration(days: 1)));
-          });
+          // The last 4 calendar weeks, oldest first, no overlap.
+          final thisWeek = _weekStartOf(now);
+          final weekStart = DateTime(
+              thisWeek.year, thisWeek.month, thisWeek.day - 7 * i);
+          final weekExpenses =
+              expenses.where((expense) => _inWeek(expense.date, weekStart));
           dataPoints.add(weekExpenses.fold(0.0, (sum, expense) => sum + expense.amount));
         }
         break;
@@ -1379,12 +1380,12 @@ class ComparisonBarPainter extends CustomPainter {
         break;
       case 'Week':
         for (int i = 3; i >= 0; i--) {
-          final weekStart = now.subtract(Duration(days: (i + 1) * 7));
-          final weekEnd = now.subtract(Duration(days: i * 7));
-          final weekExpenses = expenses.where((expense) {
-            return expense.date.isAfter(weekStart) &&
-                expense.date.isBefore(weekEnd.add(const Duration(days: 1)));
-          });
+          // The last 4 calendar weeks, oldest first, no overlap.
+          final thisWeek = _weekStartOf(now);
+          final weekStart = DateTime(
+              thisWeek.year, thisWeek.month, thisWeek.day - 7 * i);
+          final weekExpenses =
+              expenses.where((expense) => _inWeek(expense.date, weekStart));
           data.add(weekExpenses.fold(0.0, (sum, expense) => sum + expense.amount));
         }
         break;

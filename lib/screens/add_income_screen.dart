@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/expense_provider.dart';
 import '../models/expense_models.dart';
+import '../services/app_prefs.dart';
 
 class AddIncomeScreen extends StatefulWidget {
   final Income? income; // For editing existing income
@@ -37,6 +38,8 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
       _noteController.text = widget.income!.notes ?? '';
       _selectedDate = widget.income!.date;
       _selectedAccountId = widget.income!.accountId;
+    } else {
+      _selectedDate = AppPrefs.instance.defaultEntryDate();
     }
   }
 
@@ -83,134 +86,52 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Income indicator banner
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  vertical: 12,
-                  horizontal: 16,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.green.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(
-                        Icons.arrow_downward_rounded,
-                        color: Colors.green,
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        'Money coming into your account',
-                        style: TextStyle(
-                          color: Colors.green,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _buildAmountField(currency),
               const SizedBox(height: 24),
 
-              // Title Field
-              _buildSectionTitle('Title'),
-              const SizedBox(height: 8),
+              _buildSectionTitle('DETAILS'),
+              const SizedBox(height: 10),
               _buildTextField(
                 controller: _titleController,
-                labelText: 'Income Title',
+                labelText: 'Title',
                 hintText: 'e.g., Salary, Loan Repayment, Refund',
                 textCapitalization: TextCapitalization.words,
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
+                  if (value == null || value.trim().isEmpty) {
                     return 'Please enter a title';
                   }
                   return null;
                 },
               ),
-              const SizedBox(height: 20),
-
-              // Amount Field
-              _buildSectionTitle('Amount'),
-              const SizedBox(height: 8),
-              _buildTextField(
-                controller: _amountController,
-                labelText: 'Amount',
-                hintText: '0.00',
-                keyboardType: TextInputType.number,
-                prefixText: '$currency ',
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter an amount';
-                  }
-                  if (double.tryParse(value) == null) {
-                    return 'Please enter a valid amount';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 20),
-
-              // Source Field
-              _buildSectionTitle('From (Source)'),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               _buildTextField(
                 controller: _sourceController,
-                labelText: 'Source (Optional)',
+                labelText: 'From (optional)',
                 hintText: 'e.g., Friend\'s name, Company, Amazon',
                 textCapitalization: TextCapitalization.words,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
 
-              // Date and Account Row
+              _buildSectionTitle('DATE & ACCOUNT'),
+              const SizedBox(height: 10),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildSectionTitle('Date'),
-                        const SizedBox(height: 8),
-                        _buildDateSelector(),
-                      ],
-                    ),
-                  ),
+                  Expanded(child: _buildDateSelector()),
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildSectionTitle('To Account'),
-                        const SizedBox(height: 8),
-                        _buildAccountSelector(),
-                      ],
-                    ),
-                  ),
+                  Expanded(child: _buildAccountSelector()),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
 
-              // Notes Field
-              _buildSectionTitle('Notes (Optional)'),
-              const SizedBox(height: 8),
+              _buildSectionTitle('NOTES'),
+              const SizedBox(height: 10),
               _buildTextField(
                 controller: _noteController,
-                labelText: 'Notes',
+                labelText: 'Notes (optional)',
                 hintText: 'Additional details...',
-                maxLines: 2,
+                maxLines: 3,
+                minLines: 1,
               ),
               const SizedBox(height: 32),
 
@@ -243,13 +164,78 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
     );
   }
 
+  /// Small caps heading above each group of fields.
   Widget _buildSectionTitle(String title) {
-    return Text(
-      title,
-      style: const TextStyle(
-        fontSize: 18,
-        fontWeight: FontWeight.bold,
-        color: Colors.white,
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 1.1,
+          color: Colors.grey[500],
+        ),
+      ),
+    );
+  }
+
+  /// Big amount entry at the top: the one thing every entry needs.
+  Widget _buildAmountField(String currency) {
+    const big = TextStyle(fontSize: 34, fontWeight: FontWeight.bold);
+    final autoFocus =
+        widget.income == null && AppPrefs.instance.autoFocusAmount;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+      decoration: BoxDecoration(
+        color: Colors.green.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _buildSectionTitle('AMOUNT RECEIVED'),
+              const Spacer(),
+              const Icon(Icons.arrow_downward_rounded,
+                  color: Colors.green, size: 16),
+            ],
+          ),
+          TextFormField(
+            controller: _amountController,
+            autofocus: autoFocus,
+            keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+            cursorColor: Colors.green,
+            style: big.copyWith(color: Colors.white),
+            decoration: InputDecoration(
+              // prefixIcon (not prefixText) so the symbol shows even
+              // before the field is focused.
+              prefixIcon: Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(currency, style: big.copyWith(color: Colors.green)),
+              ),
+              prefixIconConstraints:
+                  const BoxConstraints(minWidth: 0, minHeight: 0),
+              hintText: '0',
+              hintStyle: big.copyWith(color: Colors.grey[800]),
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+            ),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'Please enter an amount';
+              }
+              if (double.tryParse(value.trim()) == null) {
+                return 'Please enter a valid amount';
+              }
+              return null;
+            },
+          ),
+        ],
       ),
     );
   }
@@ -258,26 +244,23 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
     required TextEditingController controller,
     required String labelText,
     String? hintText,
-    TextInputType? keyboardType,
-    String? prefixText,
     int maxLines = 1,
+    int? minLines,
     String? Function(String?)? validator,
     TextCapitalization textCapitalization = TextCapitalization.none,
   }) {
     return TextFormField(
       controller: controller,
-      keyboardType: keyboardType,
       maxLines: maxLines,
+      minLines: minLines,
       validator: validator,
       textCapitalization: textCapitalization,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: labelText,
         hintText: hintText,
-        prefixText: prefixText,
         labelStyle: const TextStyle(color: Colors.white70),
         hintStyle: const TextStyle(color: Colors.grey),
-        prefixStyle: const TextStyle(color: Colors.white),
         filled: true,
         fillColor: const Color(0xFF1A1A1A),
         border: OutlineInputBorder(
@@ -298,6 +281,16 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
         ),
       ),
     );
+  }
+
+  static String _dateLabel(DateTime d) {
+    final now = DateTime.now();
+    final day = DateTime(d.year, d.month, d.day);
+    final today = DateTime(now.year, now.month, now.day);
+    final diff = today.difference(day).inDays;
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
+    return DateFormat('d MMM yyyy').format(d);
   }
 
   Widget _buildDateSelector() {
@@ -329,7 +322,8 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
         }
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        height: 56,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
           color: const Color(0xFF1A1A1A),
           borderRadius: BorderRadius.circular(12),
@@ -341,8 +335,9 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                DateFormat('MMM dd, yyyy').format(_selectedDate),
-                style: const TextStyle(color: Colors.white),
+                _dateLabel(_selectedDate),
+                style: const TextStyle(color: Colors.white, fontSize: 15),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -357,6 +352,7 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
         final accounts = provider.accounts;
 
         return Container(
+          height: 56,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: const Color(0xFF1A1A1A),
@@ -369,9 +365,9 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
               isExpanded: true,
               dropdownColor: const Color(0xFF1A1A1A),
               icon: const Icon(Icons.keyboard_arrow_down, color: Colors.green),
-              hint: const Text(
-                'Select Account',
-                style: TextStyle(color: Colors.grey),
+              hint: Text(
+                accounts.isEmpty ? 'No account' : 'Select account',
+                style: const TextStyle(color: Colors.grey),
               ),
               items: accounts.map((account) {
                 return DropdownMenuItem<String>(
@@ -397,22 +393,15 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
   void _saveIncome() async {
     if (_isSaving) return;
     if (_formKey.currentState!.validate()) {
-      if (_selectedAccountId == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please select an account'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
+      // No account is fine (same as expenses): with none added yet, the
+      // income is simply left unassigned.
       setState(() => _isSaving = true);
 
       final now = DateTime.now();
 
       final income = Income(
         id: widget.income?.id,
-        amount: double.parse(_amountController.text),
+        amount: double.parse(_amountController.text.trim()),
         title: _titleController.text.trim(),
         source: _sourceController.text.trim(),
         date: _selectedDate,
@@ -420,6 +409,7 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
             ? null
             : _noteController.text.trim(),
         accountId: _selectedAccountId,
+        tag: widget.income?.tag,
         createdAt: widget.income?.createdAt ?? now,
         updatedAt: now,
       );

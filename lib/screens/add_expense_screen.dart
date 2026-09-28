@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/expense_provider.dart';
 import '../providers/capture_provider.dart';
+import '../services/app_prefs.dart';
 import '../models/expense_models.dart';
 // import '../models/transaction_ocr_models.dart'; // screenshot scanning off
 
@@ -63,6 +64,18 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       _selectedDate = widget.expense!.date;
       _selectedAccountId = widget.expense!.accountId;
     } else {
+      final prefs = AppPrefs.instance;
+      _selectedDate = prefs.defaultEntryDate();
+      // Optional feature: start from the last category / account used.
+      if (prefs.rememberLastUsed) {
+        final last = prefs.lastCategory;
+        if (last != null && last.isNotEmpty) _selectedCategory = last;
+        final lastAccount = prefs.lastAccountId;
+        if (lastAccount != null && lastAccount.isNotEmpty) {
+          _selectedAccountId = lastAccount;
+        }
+      }
+
       if (widget.prefilledAmount != null) {
         _amountController.text = widget.prefilledAmount!.toString();
       }
@@ -100,6 +113,18 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       if (!provider.accounts.any((a) => a.id == _selectedAccountId)) {
         _selectedAccountId = null;
       }
+      // Same for a remembered category that was deleted since.
+      if (widget.expense == null &&
+          widget.prefilledCategory == null &&
+          provider.customCategories.isNotEmpty &&
+          (_selectedCategory == ExpenseProvider.savedCategoryName ||
+              !provider.customCategories
+                  .any((c) => c.name == _selectedCategory))) {
+        _selectedCategory = provider.customCategories
+            .firstWhere((c) => c.name != ExpenseProvider.savedCategoryName,
+                orElse: () => provider.customCategories.first)
+            .name;
+      }
       if (_selectedAccountId == null && provider.defaultAccount != null) {
         _selectedAccountId = provider.defaultAccount!.id;
       }
@@ -127,7 +152,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('Add Expense'),
+        title: Text(widget.expense == null ? 'Add Expense' : 'Edit Expense'),
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
       ),
@@ -138,99 +163,60 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Payee Field
-              _buildSectionTitle('Payee'),
-              const SizedBox(height: 8),
+              _buildAmountField(currency),
+              const SizedBox(height: 20),
+
+              _buildSectionTitle('DETAILS'),
+              const SizedBox(height: 10),
               _buildTextField(
                 controller: _titleController,
                 labelText: 'Payee',
                 hintText: 'e.g., Amazon, Swiggy',
                 textCapitalization: TextCapitalization.words,
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
+                  if (value == null || value.trim().isEmpty) {
                     return 'Please enter a payee';
                   }
                   return null;
                 },
               ),
-              const SizedBox(height: 20),
-
-              // Amount Field
-              _buildSectionTitle('Amount'),
-              const SizedBox(height: 8),
-              _buildTextField(
-                controller: _amountController,
-                labelText: 'Amount',
-                hintText: '0.00',
-                keyboardType: TextInputType.number,
-                prefixText: '$currency ',
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter an amount';
-                  }
-                  if (double.tryParse(value) == null) {
-                    return 'Please enter a valid amount';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 20),
-
-              // Category Selector
-              _buildSectionTitle('Category'),
-              const SizedBox(height: 8),
-              _buildCategorySelector(),
-              const SizedBox(height: 20),
-
-              // Date and Account Row
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildSectionTitle('Date'),
-                        const SizedBox(height: 8),
-                        _buildDateSelector(),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildSectionTitle('Account'),
-                        const SizedBox(height: 8),
-                        _buildAccountSelector(),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-
-              // Purpose Field
-              _buildSectionTitle('Purpose (Optional)'),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               _buildTextField(
                 controller: _payeeController,
-                labelText: 'Purpose',
+                labelText: 'Purpose (optional)',
                 hintText: 'e.g., Groceries, Movie tickets',
                 textCapitalization: TextCapitalization.words,
               ),
               const SizedBox(height: 20),
 
-              // Notes Field
-              _buildSectionTitle('Notes (Optional)'),
-              const SizedBox(height: 8),
+              _buildSectionTitle('CATEGORY'),
+              const SizedBox(height: 10),
+              _buildCategorySelector(),
+              const SizedBox(height: 20),
+
+              _buildSectionTitle('DATE & ACCOUNT'),
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _buildDateSelector()),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildAccountSelector()),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // Detected payments put the bank SMS text here.
+              _buildSectionTitle('NOTES'),
+              const SizedBox(height: 10),
               _buildTextField(
                 controller: _noteController,
-                labelText: 'Notes',
+                labelText: 'Notes (optional)',
                 hintText: 'Additional details...',
-                maxLines: 1,
+                maxLines: 3,
+                minLines: 1,
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
 
               // Save Button
               SizedBox(
@@ -258,13 +244,73 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     );
   }
 
+  /// Small caps heading above each group of fields.
   Widget _buildSectionTitle(String title) {
-    return Text(
-      title,
-      style: const TextStyle(
-        fontSize: 18,
-        fontWeight: FontWeight.bold,
-        color: Colors.white,
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 1.1,
+          color: Colors.grey[500],
+        ),
+      ),
+    );
+  }
+
+  /// Big amount entry at the top: the one thing every entry needs.
+  Widget _buildAmountField(String currency) {
+    const big = TextStyle(fontSize: 34, fontWeight: FontWeight.bold);
+    final accent = Theme.of(context).colorScheme.primary;
+    final autoFocus = widget.expense == null &&
+        widget.prefilledAmount == null &&
+        AppPrefs.instance.autoFocusAmount;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSectionTitle('AMOUNT'),
+          TextFormField(
+            controller: _amountController,
+            autofocus: autoFocus,
+            keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+            cursorColor: accent,
+            style: big.copyWith(color: Colors.white),
+            decoration: InputDecoration(
+              // prefixIcon (not prefixText) so the symbol shows even
+              // before the field is focused.
+              prefixIcon: Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(currency, style: big.copyWith(color: accent)),
+              ),
+              prefixIconConstraints:
+                  const BoxConstraints(minWidth: 0, minHeight: 0),
+              hintText: '0',
+              hintStyle: big.copyWith(color: Colors.grey[800]),
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+            ),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'Please enter an amount';
+              }
+              if (double.tryParse(value.trim()) == null) {
+                return 'Please enter a valid amount';
+              }
+              return null;
+            },
+          ),
+        ],
       ),
     );
   }
@@ -273,26 +319,23 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     required TextEditingController controller,
     required String labelText,
     String? hintText,
-    TextInputType? keyboardType,
-    String? prefixText,
     int maxLines = 1,
+    int? minLines,
     String? Function(String?)? validator,
     TextCapitalization textCapitalization = TextCapitalization.none,
   }) {
     return TextFormField(
       controller: controller,
-      keyboardType: keyboardType,
       maxLines: maxLines,
+      minLines: minLines,
       validator: validator,
       textCapitalization: textCapitalization,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: labelText,
         hintText: hintText,
-        prefixText: prefixText,
         labelStyle: const TextStyle(color: Colors.white70),
         hintStyle: const TextStyle(color: Colors.grey),
-        prefixStyle: const TextStyle(color: Colors.white),
         filled: true,
         fillColor: const Color(0xFF1A1A1A),
         border: OutlineInputBorder(
@@ -317,10 +360,16 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   Widget _buildCategorySelector() {
     return Consumer<ExpenseProvider>(
       builder: (context, provider, child) {
-        final categories = provider.customCategories;
+        // "Saved" is filled in by month-end savings, not picked by hand
+        // (still shown when editing an entry that's already in it).
+        final categories = provider.customCategories
+            .where((c) =>
+                c.name != ExpenseProvider.savedCategoryName ||
+                _selectedCategory == c.name)
+            .toList();
 
         return SizedBox(
-          height: 110,
+          height: 96,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             itemCount: categories.length,
@@ -329,7 +378,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               final isSelected = _selectedCategory == category.name;
 
               return Padding(
-                padding: const EdgeInsets.only(right: 12),
+                padding: const EdgeInsets.only(right: 10),
                 child: GestureDetector(
                   onTap: () {
                     setState(() {
@@ -337,7 +386,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                     });
                   },
                   child: Container(
-                    width: 90,
+                    width: 82,
                     height: 55,
                     decoration: BoxDecoration(
                       color: category.color,
@@ -352,7 +401,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                       children: [
                         Text(
                           category.icon,
-                          style: const TextStyle(fontSize: 24),
+                          style: const TextStyle(fontSize: 22),
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -378,6 +427,19 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     );
   }
 
+  /// "Today", "Yesterday" or "28 Sep 2026".
+  static String _dateLabel(DateTime d) {
+    final now = DateTime.now();
+    final day = DateTime(d.year, d.month, d.day);
+    final today = DateTime(now.year, now.month, now.day);
+    final diff = today.difference(day).inDays;
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug',
+      'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
+  }
+
   Widget _buildDateSelector() {
     return GestureDetector(
       onTap: () async {
@@ -394,7 +456,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         }
       },
       child: Container(
-        padding: const EdgeInsets.all(16),
+        height: 56,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
           color: const Color(0xFF2A2A2A),
           borderRadius: BorderRadius.circular(12),
@@ -404,12 +467,16 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           children: [
             Icon(
               Icons.calendar_today,
+              size: 20,
               color: Theme.of(context).colorScheme.primary,
             ),
-            const SizedBox(width: 12),
-            Text(
-              '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}',
-              style: const TextStyle(color: Colors.white, fontSize: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _dateLabel(_selectedDate),
+                style: const TextStyle(color: Colors.white, fontSize: 15),
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ],
         ),
@@ -567,6 +634,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         }
       } else {
         await provider.addExpense(expense);
+        await AppPrefs.instance
+            .rememberUsed(expense.category, expense.accountId);
       }
 
       if (mounted) {
