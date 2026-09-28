@@ -1,5 +1,5 @@
 import '../../models/expense_models.dart';
-import '../../services/supabase_service.dart';
+import '../../services/local_store.dart';
 
 class IncomeDataManager {
   final List<Income> _incomes = [];
@@ -14,7 +14,7 @@ class IncomeDataManager {
 
   Future<void> loadIncomes(int userId) async {
     try {
-      final incomes = await ExpenseSupabaseService.getIncomes(userId: userId);
+      final incomes = await LocalStore.getIncomes(userId: userId);
       final sortedIncomes = List<Income>.from(incomes);
       sortedIncomes.sort(byDateDesc);
 
@@ -27,7 +27,7 @@ class IncomeDataManager {
   }
 
   Future<void> addIncome(Income income, int userId) async {
-    final incomeId = await ExpenseSupabaseService.addIncome(income, userId);
+    final incomeId = await LocalStore.addIncome(income, userId);
     final incomeWithId = income.copyWith(id: incomeId);
 
     final existingIndex = _incomes.indexWhere((i) => i.id == incomeId);
@@ -38,7 +38,7 @@ class IncomeDataManager {
   }
 
   Future<void> updateIncome(Income income, int userId) async {
-    await ExpenseSupabaseService.updateIncome(income, userId);
+    await LocalStore.updateIncome(income, userId);
     final index = _incomes.indexWhere((i) => i.id == income.id);
     if (index != -1) {
       _incomes[index] = income;
@@ -47,7 +47,7 @@ class IncomeDataManager {
   }
 
   Future<void> deleteIncome(String incomeId, int userId) async {
-    await ExpenseSupabaseService.deleteIncome(incomeId, userId);
+    await LocalStore.deleteIncome(incomeId, userId);
     _incomes.removeWhere((income) => income.id == incomeId);
   }
 

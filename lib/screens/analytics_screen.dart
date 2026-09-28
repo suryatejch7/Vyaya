@@ -21,12 +21,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     super.initState();
   }
 
+  /// Spending only: the automatic month-end "Saved" entries are money kept,
+  /// not spent, so they'd otherwise make every past month's spending equal
+  /// its income.
   List<Expense> _getFilteredExpenses(ExpenseProvider provider) {
-    if (_selectedAccountId == null) {
-      return provider.expenses;
-    }
     return provider.expenses
-        .where((e) => e.accountId == _selectedAccountId)
+        .where((e) => !ExpenseProvider.isAutoSavedEntry(e))
+        .where((e) =>
+            _selectedAccountId == null || e.accountId == _selectedAccountId)
         .toList();
   }
 

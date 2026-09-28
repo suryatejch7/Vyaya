@@ -15,7 +15,7 @@ class User {
     required this.updatedAt,
   });
 
-  factory User.fromSupabase(Map<String, dynamic> data) {
+  factory User.fromJson(Map<String, dynamic> data) {
     return User(
       id: data['id'] as int,
       userName: data['user_name'] as String,
@@ -24,7 +24,7 @@ class User {
     );
   }
 
-  Map<String, dynamic> toSupabase() {
+  Map<String, dynamic> toJson() {
     return {
       'id': id,
       'user_name': userName,
@@ -61,7 +61,7 @@ class UserSettings {
     required this.updatedAt,
   });
 
-  factory UserSettings.fromSupabase(Map<String, dynamic> data) {
+  factory UserSettings.fromJson(Map<String, dynamic> data) {
     final categoryBudgetsJson = data['category_budgets'] as Map<String, dynamic>? ?? {};
     final categoryBudgets = <String, double>{};
     categoryBudgetsJson.forEach((key, value) {
@@ -70,12 +70,12 @@ class UserSettings {
 
     final customCategoriesJson = data['custom_categories'] as List<dynamic>? ?? [];
     final customCategories = customCategoriesJson
-        .map((item) => ExpenseCategory.fromSupabase(item as Map<String, dynamic>))
+        .map((item) => ExpenseCategory.fromJson(item as Map<String, dynamic>))
         .toList();
 
     final accountsJson = data['accounts'] as List<dynamic>? ?? [];
     final accounts = accountsJson
-        .map((item) => BankAccount.fromSupabase(item as Map<String, dynamic>))
+        .map((item) => BankAccount.fromJson(item as Map<String, dynamic>))
         .toList();
 
     return UserSettings(
@@ -93,14 +93,14 @@ class UserSettings {
     );
   }
 
-  Map<String, dynamic> toSupabase() {
+  Map<String, dynamic> toJson() {
     return {
       'user_id': userId,
       'monthly_budget': monthlyBudget,
       'currency': currency,
       'category_budgets': categoryBudgets,
-      'custom_categories': customCategories.map((cat) => cat.toSupabase()).toList(),
-      'accounts': accounts.map((acc) => acc.toSupabase()).toList(),
+      'custom_categories': customCategories.map((cat) => cat.toJson()).toList(),
+      'accounts': accounts.map((acc) => acc.toJson()).toList(),
       'crop_top': cropTop,
       'crop_bottom': cropBottom,
       'is_crop_calibrated': isCropCalibrated,

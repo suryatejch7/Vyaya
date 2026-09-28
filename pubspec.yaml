@@ -36,16 +36,20 @@ dependencies:
   provider: ^6.1.1
   lottie: ^3.1.2
 
-  # Local storage (previously Supabase)
+  # Export / backup files (share sheet + file picker for restore)
   share_plus: ^10.0.0
   file_picker: ^8.0.0
 
-  # OCR and image processing
-  google_mlkit_text_recognition: ^0.15.0
-  image_picker: ^1.2.0
-  receive_sharing_intent: 1.8.1 # pinned: 1.9.0 needs compileSdk 37 + AGP 9
+  # Screenshot scanning (ML Kit OCR) - DISABLED so the app stays fully
+  # offline with no internet permission. See "Re-enabling screenshot
+  # scanning" in README.md before uncommenting.
+  # google_mlkit_text_recognition: ^0.15.0
+  # image_picker: ^1.2.0
+  # receive_sharing_intent: 1.8.1 # pinned: 1.9.0 needs compileSdk 37 + AGP 9
+  # image: ^4.1.3
+
+  # Nav bar glass effect
   vector_math: ^2.1.4
-  image: ^4.1.3
 
   # Notifications
   flutter_local_notifications: ^17.0.0
@@ -60,8 +64,6 @@ dependencies:
   # Native payment detection (bank SMS + payment-app notifications)
   vyaya_capture:
     path: packages/vyaya_capture
-
-  # (flutter_dotenv removed — no longer needed)
 
 dev_dependencies:
   flutter_test:

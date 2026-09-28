@@ -47,6 +47,10 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
     if (!_isInitialized) {
       _isInitialized = true;
       final provider = context.read<ExpenseProvider>();
+      // An account that no longer exists can't be shown by the dropdown.
+      if (!provider.accounts.any((a) => a.id == _selectedAccountId)) {
+        _selectedAccountId = null;
+      }
       if (_selectedAccountId == null && provider.defaultAccount != null) {
         _selectedAccountId = provider.defaultAccount!.id;
       }

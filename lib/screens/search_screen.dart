@@ -14,17 +14,21 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _controller = TextEditingController();
+  // Kept from initState: context lookups aren't allowed inside dispose().
+  late final ExpenseProvider _provider;
 
   @override
   void initState() {
     super.initState();
-    _controller.text = context.read<ExpenseProvider>().searchQuery;
+    _provider = context.read<ExpenseProvider>();
+    _controller.text = _provider.searchQuery;
   }
 
   @override
   void dispose() {
-    // Clear search query so it doesn't leak to home page filtered results
-    context.read<ExpenseProvider>().clearSearch();
+    // Clear the query so it doesn't linger for the next search. No
+    // notifyListeners here: the widget tree is locked during dispose.
+    _provider.clearSearch(notify: false);
     _controller.dispose();
     super.dispose();
   }

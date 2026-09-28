@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/expense_models.dart';
-import '../../services/supabase_service.dart';
+import '../../services/local_store.dart';
 
 class BudgetManager {
   final Map<String, double> _categoryBudgets = {};
@@ -16,7 +16,7 @@ class BudgetManager {
   }
 
   Future<void> updateMonthlyBudget(double budget, int userId) async {
-    await ExpenseSupabaseService.updateMonthlyBudget(budget, userId: userId);
+    await LocalStore.updateMonthlyBudget(budget, userId: userId);
     _monthlyBudget = budget;
   }
 
@@ -66,7 +66,7 @@ class BudgetManager {
       throw Exception('Category not found: $categoryName');
     }
 
-    await ExpenseSupabaseService.updateCategoryBudget(
+    await LocalStore.updateCategoryBudget(
       categoryId,
       budget,
       userId: userId,
@@ -83,7 +83,7 @@ class BudgetManager {
     double budget,
     int userId,
   ) async {
-    await ExpenseSupabaseService.updateCategoryBudget(
+    await LocalStore.updateCategoryBudget(
       categoryId,
       budget,
       userId: userId,

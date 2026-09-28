@@ -4,8 +4,7 @@ import '../models/expense_models.dart';
 import '../models/recurring_entry.dart';
 import '../models/debt_entry.dart';
 import '../models/user_settings.dart';
-import '../services/supabase_service.dart';
-import '../services/cache_service.dart';
+import '../services/local_store.dart';
 import 'managers/expense_data_manager.dart';
 import 'managers/income_data_manager.dart';
 import 'managers/budget_manager.dart';
@@ -48,8 +47,6 @@ class ExpenseProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String get searchQuery => _searchQuery;
   bool get isInitialized => _isInitialized;
-  bool get hasMoreExpenses => _expenseManager.hasMoreExpenses;
-  bool get isLoadingMore => _expenseManager.isLoadingMore;
 
   BankAccount? get defaultAccount => _accountManager.defaultAccount;
 
@@ -67,29 +64,16 @@ class ExpenseProvider extends ChangeNotifier {
     _customCategories.addAll(userSettings.customCategories);
     _accountManager.initialize(userSettings.accounts);
 
-    _expenseManager.resetPagination();
-
-    final hasCachedData = await _expenseManager.loadFromCache(userId);
-    if (hasCachedData) {
-      _isInitialized = true;
-      notifyListeners();
-
-      await _expenseManager.syncWithServer(userId);
-      notifyListeners();
-    } else {
-      await _expenseManager.loadExpensesPaginated(userId);
-      _isInitialized = true;
-      notifyListeners();
-    }
-
-    await CacheService.cacheSettings(userSettings);
-    await CacheService.saveCurrentUserId(userId);
+    await _expenseManager.loadExpenses(userId);
+    _isInitialized = true;
+    notifyListeners();
 
     await loadIncomes();
 
     // Recurring entries + month-end savings need expenses/incomes loaded.
     await _loadRecurring();
     await _loadDebts();
+    await _clearDanglingAccountIds();
     await runAutomations();
 
     await _notificationManager
@@ -122,7 +106,6 @@ class ExpenseProvider extends ChangeNotifier {
 
     try {
       _isLoading = true;
-      _expenseManager.resetPagination();
       notifyListeners();
 
       await _expenseManager.loadExpenses(_userId);
@@ -130,15 +113,13 @@ class ExpenseProvider extends ChangeNotifier {
       await loadIncomes();
 
       final userSettings =
-          await ExpenseSupabaseService.getUserSettings(userId: _userId);
+          await LocalStore.getUserSettings(userId: _userId);
       _budgetManager.initialize(
           userSettings.monthlyBudget, userSettings.categoryBudgets);
       _currency = userSettings.currency;
       _customCategories.clear();
       _customCategories.addAll(userSettings.customCategories);
       _accountManager.initialize(userSettings.accounts);
-
-      await CacheService.cacheSettings(userSettings);
 
       notifyListeners();
     } finally {
@@ -181,9 +162,9 @@ class ExpenseProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void clearSearch() {
+  void clearSearch({bool notify = true}) {
     _searchQuery = '';
-    notifyListeners();
+    if (notify) notifyListeners();
   }
 
   double get totalExpense {
@@ -391,17 +372,11 @@ class ExpenseProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> loadMoreExpenses() async {
-    final changed = await _expenseManager.loadMoreExpenses(_userId);
-    if (changed) notifyListeners();
-  }
-
   Future<void> reloadExpenses() async {
     if (_userId == 0) return;
 
     try {
       _isLoading = true;
-      _expenseManager.resetPagination();
       notifyListeners();
 
       await _expenseManager.reloadExpenses(_userId);
@@ -412,10 +387,6 @@ class ExpenseProvider extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
-  }
-
-  Future<bool> verifyDataConsistency() async {
-    return _expenseManager.verifyDataConsistency(_userId);
   }
 
   Future<void> addIncome(Income income) async {
@@ -584,7 +555,7 @@ class ExpenseProvider extends ChangeNotifier {
   Future<void> addCustomCategory(ExpenseCategory category) async {
     try {
       _customCategories.add(category);
-      await ExpenseSupabaseService.saveCustomCategories(_customCategories,
+      await LocalStore.saveCustomCategories(_customCategories,
           userId: _userId);
       notifyListeners();
     } catch (e) {
@@ -596,7 +567,7 @@ class ExpenseProvider extends ChangeNotifier {
   Future<void> removeCustomCategory(String categoryId) async {
     try {
       _customCategories.removeWhere((cat) => cat.id == categoryId);
-      await ExpenseSupabaseService.saveCustomCategories(_customCategories,
+      await LocalStore.saveCustomCategories(_customCategories,
           userId: _userId);
       notifyListeners();
     } catch (e) {
@@ -617,7 +588,7 @@ class ExpenseProvider extends ChangeNotifier {
   Future<Map<String, int>> getExpenseCountsForCategories(
       Iterable<String> names) async {
     final all =
-        await ExpenseSupabaseService.getExpenseCountsByCategory(userId: _userId);
+        await LocalStore.getExpenseCountsByCategory(userId: _userId);
     return {
       for (final n in names)
         if ((all[n] ?? 0) > 0) n: all[n]!,
@@ -633,11 +604,11 @@ class ExpenseProvider extends ChangeNotifier {
     final snapshot = List<ExpenseCategory>.from(_customCategories);
     try {
       if (reassign.isNotEmpty) {
-        await ExpenseSupabaseService.reassignExpenseCategories(reassign,
+        await LocalStore.reassignExpenseCategories(reassign,
             userId: _userId);
       }
       _customCategories.removeWhere((cat) => categoryIds.contains(cat.id));
-      await ExpenseSupabaseService.saveCustomCategories(_customCategories,
+      await LocalStore.saveCustomCategories(_customCategories,
           userId: _userId);
       if (reassign.isNotEmpty) {
         await reloadExpenses(); // refresh in-memory lists/analytics
@@ -757,13 +728,13 @@ class ExpenseProvider extends ChangeNotifier {
 
   Future<void> _loadRecurring() async {
     final raw =
-        await ExpenseSupabaseService.getJsonList('recurring', userId: _userId);
+        await LocalStore.getJsonList('recurring', userId: _userId);
     _recurring
       ..clear()
       ..addAll(raw.map(RecurringEntry.fromJson));
   }
 
-  Future<void> _saveRecurring() => ExpenseSupabaseService.saveJsonList(
+  Future<void> _saveRecurring() => LocalStore.saveJsonList(
       'recurring', _recurring.map((r) => r.toJson()).toList(),
       userId: _userId);
 
@@ -878,6 +849,11 @@ class ExpenseProvider extends ChangeNotifier {
   static bool _isAutoSaved(Expense e) =>
       e.transactionId?.startsWith(_autoSavedPrefix) ?? false;
 
+  /// True for the automatic month-end "Saved" entry. It's stored as an
+  /// expense so the month balances, but it isn't spending, so analytics
+  /// leaves it out.
+  static bool isAutoSavedEntry(Expense e) => _isAutoSaved(e);
+
   bool _savingsRunning = false;
 
   /// Keeps every closed month's "Saved" entry equal to that month's
@@ -893,17 +869,17 @@ class ExpenseProvider extends ChangeNotifier {
       final thisMonth = DateTime(now.year, now.month);
 
       var fromKey =
-          ExpenseSupabaseService.getMeta('savings_from', userId: _userId);
+          LocalStore.getMeta('savings_from', userId: _userId);
       if (fromKey == null) {
         // Migrate from the earlier one-shot marker if present.
         final legacy =
-            ExpenseSupabaseService.getMeta('savings_through', userId: _userId);
+            LocalStore.getMeta('savings_through', userId: _userId);
         final legacyMonth = legacy == null ? null : _parseMonthKey(legacy);
         final from = legacyMonth == null
             ? thisMonth
             : DateTime(legacyMonth.year, legacyMonth.month + 1);
         fromKey = _monthKey(from);
-        await ExpenseSupabaseService.setMeta('savings_from', fromKey,
+        await LocalStore.setMeta('savings_from', fromKey,
             userId: _userId);
       }
 
@@ -1011,13 +987,13 @@ class ExpenseProvider extends ChangeNotifier {
 
   Future<void> _loadDebts() async {
     final raw =
-        await ExpenseSupabaseService.getJsonList('debts', userId: _userId);
+        await LocalStore.getJsonList('debts', userId: _userId);
     _debts
       ..clear()
       ..addAll(raw.map(DebtEntry.fromJson));
   }
 
-  Future<void> _saveDebts() => ExpenseSupabaseService.saveJsonList(
+  Future<void> _saveDebts() => LocalStore.saveJsonList(
       'debts', _debts.map((d) => d.toJson()).toList(),
       userId: _userId);
 
@@ -1091,9 +1067,72 @@ class ExpenseProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> removeAccount(String accountId) async {
+  /// Older versions deleted accounts without moving their entries, leaving
+  /// ids that match no account (blank name, and account pickers can't show
+  /// them). Clears those links once at startup.
+  Future<void> _clearDanglingAccountIds() async {
+    final valid = _accountManager.accounts.map((a) => a.id).toSet();
+    if (valid.isEmpty) return; // nothing to compare against
+    bool dangling(String? id) =>
+        id != null && id.isNotEmpty && !valid.contains(id);
+    final ids = <String>{
+      for (final e in _expenseManager.expenses)
+        if (dangling(e.accountId)) e.accountId!,
+      for (final i in _incomeManager.incomes)
+        if (dangling(i.accountId)) i.accountId!,
+    };
+    final recurringIdx = [
+      for (var i = 0; i < _recurring.length; i++)
+        if (dangling(_recurring[i].accountId)) i,
+    ];
+    if (ids.isEmpty && recurringIdx.isEmpty) return;
     try {
+      for (final id in ids) {
+        await LocalStore.reassignAccount(id, null, userId: _userId);
+      }
+      for (final i in recurringIdx) {
+        _recurring[i] = RecurringEntry.fromJson(
+            {..._recurring[i].toJson(), 'account_id': null});
+      }
+      if (recurringIdx.isNotEmpty) await _saveRecurring();
+      if (ids.isNotEmpty) {
+        await _expenseManager.reloadExpenses(_userId);
+        await _incomeManager.loadIncomes(_userId);
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Clearing old account links failed: $e');
+    }
+  }
+
+  /// How many expenses, incomes and recurring entries use this account.
+  int accountUsageCount(String accountId) =>
+      _expenseManager.expenses.where((e) => e.accountId == accountId).length +
+      _incomeManager.incomes.where((i) => i.accountId == accountId).length +
+      _recurring.where((r) => r.accountId == accountId).length;
+
+  /// Deletes an account. Anything that used it moves to [moveTo], or is left
+  /// with no account when [moveTo] is null, so nothing keeps pointing at an
+  /// account that no longer exists.
+  Future<void> removeAccount(String accountId, {String? moveTo}) async {
+    try {
+      final used = accountUsageCount(accountId) > 0;
+      if (used) {
+        await LocalStore.reassignAccount(accountId, moveTo,
+            userId: _userId);
+        var recurringChanged = false;
+        for (var i = 0; i < _recurring.length; i++) {
+          if (_recurring[i].accountId == accountId) {
+            // Via JSON so a null target really clears the field.
+            _recurring[i] = RecurringEntry.fromJson(
+                {..._recurring[i].toJson(), 'account_id': moveTo});
+            recurringChanged = true;
+          }
+        }
+        if (recurringChanged) await _saveRecurring();
+      }
       await _accountManager.removeAccount(accountId, _userId);
+      if (used) await reloadExpenses(); // refresh in-memory lists
       notifyListeners();
     } catch (e) {
       throw Exception('Failed to remove account: $e');
@@ -1126,32 +1165,5 @@ class ExpenseProvider extends ChangeNotifier {
     return currentMonthExpenses
         .where((expense) => categoryBucket(expense.category) == category)
         .fold(0.0, (sum, expense) => sum + expense.amount);
-  }
-
-  Future<void> _loadUserSettings() async {
-    try {
-      final settings =
-          await ExpenseSupabaseService.getUserSettings(userId: _userId);
-      _budgetManager.initialize(
-          settings.monthlyBudget, settings.categoryBudgets);
-      _currency = settings.currency;
-      _customCategories.clear();
-      _customCategories.addAll(settings.customCategories);
-    } catch (e) {
-    }
-  }
-
-  Future<void> refresh() async {
-    await _loadUserSettings();
-    await _expenseManager.loadExpenses(_userId);
-  }
-
-  Future<List<Expense>> getExpensesForPeriod(
-      DateTime startDate, DateTime endDate) async {
-    return _expenseManager.getExpensesForPeriod(startDate, endDate, _userId);
-  }
-
-  Future<List<Expense>> searchExpenses(String query) async {
-    return _expenseManager.searchExpenses(query, _userId);
   }
 }

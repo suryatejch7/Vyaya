@@ -2,7 +2,7 @@
 
 *Vyaya* (व्यय) is Sanskrit for "expenditure", which is exactly what this app keeps an eye on.
 
-Vyaya is a personal expense tracker for Android, built with Flutter. I made it because every expense app I tried either wanted my bank login, pushed a subscription, or took five taps to log a ₹20 chai. Vyaya is the opposite: everything stays on your phone, logging is quick, and if you pay with PhonePe you can often skip typing entirely by sharing the payment screenshot.
+Vyaya is a personal expense tracker for Android, built with Flutter. I made it because every expense app I tried either wanted my bank login, pushed a subscription, or took five taps to log a ₹20 chai. Vyaya is the opposite: everything stays on your phone (the app has no internet permission at all), logging is quick, and payments can be picked up automatically from your bank SMS and payment-app notifications.
 
 It's built around a simple idea: **you log the money that comes in, you log the money that goes out, and the app tells you what's left.**
 
@@ -12,23 +12,23 @@ It's built around a simple idea: **you log the money that comes in, you log the 
 
 ### Logging money
 - **Add an expense by hand:** payee, amount, purpose, category, date, account and notes. Tap the **+** button on the home screen.
-- **Scan a PhonePe screenshot:** open a transaction in PhonePe's history, take a screenshot and either **share it to Vyaya** or pick it from the scanner. The app crops it, runs on-device OCR (Google ML Kit) and fills in the payee and amount for you to confirm.
 - **Log income:** pocket money, salary, refunds, anything coming in. Income is shown in green throughout the app.
 - **Edit or delete anything:** tap an entry to edit it. Deleting shows an **UNDO** button for a few seconds, in case your thumb slipped.
 - **Delete several at once:** long-press an entry to start selecting, tap more, then delete from the nav bar.
 
 ### Auto-detecting payments
-You can have payments logged without typing anything or taking a screenshot. Vyaya can read two things:
+You can have payments logged without typing anything. Vyaya can read two things:
 - **Payment app notifications** from PhonePe, Google Pay, Paytm, BHIM, CRED, Amazon Pay, Navi, MobiKwik and Freecharge ("₹120 paid to Swiggy").
 - **Bank SMS**, meaning the debit and credit alerts your bank already sends. It can also import the last 30 days in one go.
 
 Each message is read on your phone and turned into amount, payee, date and account. It also gets a category (Swiggy → Food, Uber → Transport, and so on), and when you correct a payee's category once, it remembers.
 
 - **Ask me** (default): new payments land in a review list with Add / Edit / Dismiss, and a banner on the home screen tells you when there's something to look at.
-- **Add automatically**: payments it's confident about go straight in. Anything unclear still waits for you. That includes no payee, a transfer between your own accounts, a reversal, a message with a link, or imported history.
+- **Add automatically**: payments it's confident about go straight in. Anything unclear still waits for you. That includes no payee, a transfer between your own accounts, a credit card bill payment, a reversal, a message with a link, or imported history. **Add all** on the review list also leaves transfers and card bill payments for you to decide.
 
 It's careful about the common traps:
 - **No double logging.** If PhonePe *and* your bank both tell you about the same payment, it's matched using the UPI reference, the time and the payee, and logged once. Anything you already added by hand is spotted too.
+- **No double counting card bills.** Your credit card purchases are already logged, so paying the bill isn't counted as spending again. The card's "payment received" message is ignored, and the bank's "debited towards CC payment" (or "paid to CRED") waits for review instead of going straight in.
 - **Ignores noise:** OTPs, loan and cashback promos, failed or declined payments, autopay reminders and money requests.
 - **Ignores scams:** fake "₹25,000 credited, claim here" texts, anything from a personal phone number, lottery and KYC messages.
 - **Keeps working when the app is closed.** Messages are queued on the phone and picked up the next time you open Vyaya. You get a small "New payment detected" notification in the meantime.
@@ -40,7 +40,7 @@ Set it up in **Settings → Auto-detect Payments**. If Android greys out the Not
 - **Browse past months:** use the ◀ ▶ arrows next to "This Month's Spending". The card, category summary and activity list all switch to that month.
 - **Category summary:** a scrollable row showing where the month's money went.
 - **Credit card view:** switch "Recent Activity" to "Credit Card" to see only card spending for the month.
-- **Analytics:** day, week, month or year views with a category pie chart, spending trend, month-by-month comparison and a few plain-English insights. For example: "Food is your highest spending category this month".
+- **Analytics:** spending only (month-end "Saved" entries aren't counted as spending). Day, week, month or year views with a category pie chart, spending trend, month-by-month comparison and a few plain-English insights. For example: "Food is your highest spending category this month".
 
 ### Things that happen on their own
 - **Recurring entries:** set up things that repeat every month once, like pocket money on the 1st or Spotify on the 5th, and Vyaya logs them automatically when their day comes. You can pause, edit or delete them anytime. If you don't open the app for a while, it catches up with anything you missed.
@@ -57,10 +57,11 @@ Set it up in **Settings → Auto-detect Payments**. If Android greys out the Not
 - **Optional per-category monthly limits,** with a warning when you cross one.
 
 ### Your data
-- **Everything is stored on your phone.** There's no account, no server and no sync. SMS and notifications are read on the device, and nothing leaves it unless you share it.
+- **Completely offline.** The app has no internet permission, so it can't send anything anywhere. There's no account, no server and no sync. SMS and notifications are read on the device.
+- **No Google Drive backup.** Android's automatic backup is turned off (phone-to-phone copy too), so your data only leaves the phone when you export or back it up yourself.
 - **Backup & Restore:** exports a single JSON file with everything (expenses, income, categories, accounts, recurring entries, lent/borrowed) that you can save to Drive or wherever you like, and restore later.
 - **Export to CSV:** a spreadsheet of all expenses and income, handy for Excel or Google Sheets. It's export-only and can't be imported back.
-- **Automatic safety copy:** the app also keeps a copy of your data that's included in Android's own backup, so a reinstall can bring your data back even if you forgot to make a backup yourself.
+- **Local safety copy:** the app also keeps a copy of your data inside its own storage and restores from it if its main data ever gets wiped. It's deleted with the app, so use Back up before uninstalling or switching phones.
 
 ---
 
@@ -73,27 +74,26 @@ Some features are hidden behind gestures, so here's the cheat sheet:
 | Nav bar | Tap **Home** / **Categories** | Switch tabs (you can also swipe sideways on the bar) |
 | Nav bar | Tap **Search** | Search through your expenses |
 | Nav bar | **Swipe up** (or long-press Search) | Opens **Analytics, Recurring, Lent & Borrowed, Settings** |
-| Home | Tap **+** | Add expense, add income, or scan a screenshot |
+| Home | Tap **+** | Add expense or add income |
 | Home | Tap the "payments detected" banner | Review auto-detected payments |
 | Home | ◀ ▶ next to the month | Look at previous months |
 | Home | Tap "Recent Activity" | Switch to the credit card view |
 | Any entry | Tap / ⋮ menu / long-press | Edit / delete (with undo) / select several |
 | Settings → Categories | Long-press a category | Select several to delete |
-| Settings → PhonePe Scanning | Crop Calibration | Set up screenshot scanning for your phone |
 
 The little line on top of the nav bar is there to remind you that it swipes up.
 
 ---
 
-## Getting the PhonePe scanner to work well
+## Re-enabling screenshot scanning
 
-The scanner only reads the part of the screenshot that holds the payee name and the amount, so it needs to know where that is on *your* phone's screen:
+Scanning PhonePe screenshots with Google ML Kit OCR is switched off, because ML Kit adds the internet permission and sends Google usage data. The code is commented out, not deleted, so it can come back (the app will then use the internet):
 
-1. Open PhonePe, go to **History**, open any transaction and take a screenshot.
-2. In Vyaya, open **Settings → PhonePe Scanning → Crop Calibration** and adjust the crop until only the name and amount are inside it.
-3. From then on, share any PhonePe transaction screenshot to Vyaya and it will fill in the details for you.
-
-It's not perfect. In my testing it gets both fields right roughly 7 times out of 10, and it always lets you check and fix things before saving. It's built for PhonePe's layout, so screenshots from other apps won't parse properly yet.
+1. `pubspec.yaml`: uncomment `google_mlkit_text_recognition`, `image_picker`, `receive_sharing_intent` and `image`, then run `flutter pub get`.
+2. `android/app/build.gradle` and `android/app/proguard-rules.pro`: uncomment the ML Kit, EXIF, camera and receive_sharing_intent lines.
+3. `android/app/src/main/AndroidManifest.xml`: uncomment the camera/storage permissions and the two "share image" intent filters. Delete `android/app/src/release/AndroidManifest.xml` (it strips the internet permission that ML Kit needs).
+4. Uncomment these files (select everything below the header, press Ctrl+/): `lib/services/primary_ocr_service.dart`, `image_preprocessing_service.dart`, `field_extraction_service.dart`, `text_normalization_service.dart`, `transaction_processing_service.dart`, `sharing_intent_service.dart`, `lib/models/transaction_ocr_models.dart`, `lib/screens/transaction_scanner_screen.dart`, `crop_calibration_screen.dart`.
+5. Uncomment the lines marked "screenshot scanning" in `main_screen.dart`, `settings_screen.dart` and `add_expense_screen.dart`.
 
 ---
 
@@ -142,10 +142,8 @@ The APK ends up in `build/app/outputs/flutter-apk/app-release.apk`.
 ## Under the hood
 
 - **Flutter + Provider** for the UI and app state
-- **SharedPreferences** for storage. It's all local; the class is still called `ExpenseSupabaseService` from back when the app used Supabase.
-- **Google ML Kit** text recognition for OCR, with image pre-processing (cropping and clean-up) and text normalisation before the fields are pulled out
+- **SharedPreferences** for storage, through `LocalStore` (`lib/services/local_store.dart`). It's all on the device.
 - **flutter_local_notifications** for alerts
-- **receive_sharing_intent** for the share-to-app flow
 - **Hand-drawn charts** made with `CustomPainter`, with no charting library
 
 ```
@@ -155,7 +153,7 @@ packages/
 lib/
 ├── models/      Expense, Income, categories, recurring entries, lent/borrowed
 ├── providers/   ExpenseProvider (the hub) + managers for expenses, income, budgets…
-├── services/    storage, OCR pipeline, backup/export, notifications, intents,
+├── services/    storage, backup/export, notifications, intents,
 │                capture/ (SMS & notification parser, categoriser)
 ├── screens/     home, categories, analytics, settings, recurring, lent & borrowed…
 └── widgets/     cards, glass nav bar, category summary, charts
@@ -165,7 +163,6 @@ lib/
 
 ## Known limitations
 
-- Screenshot scanning only understands PhonePe's layout. For other apps, use auto-detection.
 - Auto-detection understands the common Indian bank and UPI formats. A message it can't fully read still shows up for review with the original text, rather than being dropped.
 - Automatic entries (recurring and month-end savings) are created when you open or return to the app, not in the background. If you don't open it on the 1st, they appear the next time you do, with the correct dates.
 - The "Saved from …" entries are managed by the app. If you delete or edit one by hand, it goes back to the correct amount, so change that month's real entries instead.

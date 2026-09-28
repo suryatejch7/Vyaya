@@ -29,7 +29,7 @@ class Expense {
     required this.updatedAt,
   });
 
-  factory Expense.fromSupabase(Map<String, dynamic> data) {
+  factory Expense.fromJson(Map<String, dynamic> data) {
     return Expense(
       id: data['id']?.toString(),
       amount: (data['amount'] as num).toDouble(),
@@ -46,7 +46,7 @@ class Expense {
     );
   }
 
-  Map<String, dynamic> toSupabase() {
+  Map<String, dynamic> toJson() {
     return {
       if (id != null) 'id': id,
       'amount': amount,
@@ -117,7 +117,7 @@ class Income {
     required this.updatedAt,
   });
 
-  factory Income.fromSupabase(Map<String, dynamic> data) {
+  factory Income.fromJson(Map<String, dynamic> data) {
     return Income(
       id: data['id']?.toString(),
       amount: (data['amount'] as num).toDouble(),
@@ -131,7 +131,7 @@ class Income {
     );
   }
 
-  Map<String, dynamic> toSupabase() {
+  Map<String, dynamic> toJson() {
     return {
       if (id != null) 'id': id,
       'amount': amount,
@@ -196,7 +196,7 @@ class ExpenseCategory {
 
   String get displayName => name;
 
-  factory ExpenseCategory.fromSupabase(Map<String, dynamic> data) {
+  factory ExpenseCategory.fromJson(Map<String, dynamic> data) {
     return ExpenseCategory(
       id: data['id'],
       name: data['name'],
@@ -206,7 +206,7 @@ class ExpenseCategory {
     );
   }
 
-  Map<String, dynamic> toSupabase() {
+  Map<String, dynamic> toJson() {
     return {
       'id': id,
       'name': name,
@@ -322,7 +322,7 @@ class BankAccount {
 
   bool get isCreditCard => type == AccountType.creditCard;
 
-  factory BankAccount.fromSupabase(Map<String, dynamic> data) {
+  factory BankAccount.fromJson(Map<String, dynamic> data) {
     return BankAccount(
       id: data['id'] as String,
       name: data['name'] as String,
@@ -331,7 +331,7 @@ class BankAccount {
     );
   }
 
-  Map<String, dynamic> toSupabase() {
+  Map<String, dynamic> toJson() {
     return {
       'id': id,
       'name': name,

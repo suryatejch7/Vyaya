@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/expense_provider.dart';
 import '../models/expense_models.dart';
-import '../models/transaction_ocr_models.dart';
+// import '../models/transaction_ocr_models.dart'; // screenshot scanning off
 
 class AddExpenseScreen extends StatefulWidget {
   final Expense? expense;
@@ -15,7 +15,7 @@ class AddExpenseScreen extends StatefulWidget {
   final DateTime? prefilledDate;
   final String? prefilledAccountId;
   final bool autoSave;
-  final ExtractedTransaction? extractedData;
+  // final ExtractedTransaction? extractedData; // screenshot scanning off
 
   const AddExpenseScreen({
     super.key,
@@ -29,7 +29,7 @@ class AddExpenseScreen extends StatefulWidget {
     this.prefilledDate,
     this.prefilledAccountId,
     this.autoSave = false,
-    this.extractedData,
+    // this.extractedData, // screenshot scanning off
   });
 
   @override
@@ -95,6 +95,10 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     if (!_isInitialized) {
       _isInitialized = true;
       final provider = context.read<ExpenseProvider>();
+      // An account that no longer exists can't be shown by the dropdown.
+      if (!provider.accounts.any((a) => a.id == _selectedAccountId)) {
+        _selectedAccountId = null;
+      }
       if (_selectedAccountId == null && provider.defaultAccount != null) {
         _selectedAccountId = provider.defaultAccount!.id;
       }
@@ -557,11 +561,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       if (mounted) {
         setState(() => _isSaving = false);
         String errorMessage = 'Failed to save expense';
-        if (e.toString().contains('network')) {
-          errorMessage = 'Network error. Please check your connection.';
-        } else if (e.toString().contains('database')) {
-          errorMessage = 'Database error. Please try again.';
-        } else if (e.toString().contains('validation')) {
+        if (e.toString().contains('validation')) {
           errorMessage = 'Please check your input and try again.';
         }
 

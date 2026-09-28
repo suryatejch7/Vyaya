@@ -44,10 +44,16 @@ class DetectedPaymentsScreen extends StatelessWidget {
                 TextButton(
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
-                    final n = pending.length;
-                    await cap.acceptAll();
+                    final r = await cap.acceptAll();
+                    final left = r.skipped == 0
+                        ? ''
+                        : ' · ${r.skipped} transfer/card bill '
+                            '${r.skipped == 1 ? 'payment' : 'payments'} left to review';
                     messenger.showSnackBar(
-                      SnackBar(content: Text('Added $n payments')),
+                      SnackBar(
+                        content: Text(
+                            'Added ${r.added} ${r.added == 1 ? 'payment' : 'payments'}$left'),
+                      ),
                     );
                   },
                   child: const Text('Add all'),
@@ -179,6 +185,8 @@ class _InfoCard extends StatelessWidget {
 
 const _flagText = {
   'transfer': 'Looks like a transfer between your own accounts',
+  'card-bill':
+      'Credit card bill payment. Your card purchases are probably logged already, so adding this would count them twice',
   'reversal': 'Reversal of an earlier payment',
   'link': 'Message contains a link, so check it\'s genuine',
 };
@@ -239,7 +247,7 @@ class _DetectedCardState extends State<_DetectedCard> {
     final cap = context.read<CaptureProvider>();
     final navigator = Navigator.of(context);
     final item = widget.item;
-    final accountId = await cap.accountFor(item.id);
+    final account = await cap.accountFor(item.id);
     final saved = await navigator.push<bool>(
       MaterialPageRoute(
         builder: (context) => AddExpenseScreen(
@@ -250,11 +258,16 @@ class _DetectedCardState extends State<_DetectedCard> {
           prefilledCategory: item.category,
           prefilledNotes: 'Auto-detected from ${item.appLabel}',
           prefilledDate: item.occurredAt,
-          prefilledAccountId: accountId,
+          prefilledAccountId: account.id,
         ),
       ),
     );
     if (saved == true) await cap.markAddedFromEditor(item.id);
+    // The bank account made just for this edit goes away again if the edit
+    // was cancelled or saved against a different account.
+    if (account.created && account.id != null) {
+      await cap.discardAccountIfUnused(account.id!);
+    }
   }
 
   @override

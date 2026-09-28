@@ -1,5 +1,5 @@
 import '../../models/expense_models.dart';
-import '../../services/supabase_service.dart';
+import '../../services/local_store.dart';
 
 class AccountManager {
   final List<BankAccount> _accounts = [];
@@ -38,7 +38,7 @@ class AccountManager {
     final newAccount = isFirst ? account.copyWith(isDefault: true) : account;
 
     _accounts.add(newAccount);
-    await _saveAccountsToBackend(userId);
+    await _saveAccounts(userId);
   }
 
   Future<void> removeAccount(String accountId, int userId) async {
@@ -50,7 +50,7 @@ class AccountManager {
       _accounts[0] = _accounts[0].copyWith(isDefault: true);
     }
 
-    await _saveAccountsToBackend(userId);
+    await _saveAccounts(userId);
   }
 
   Future<void> setDefaultAccount(String accountId, int userId) async {
@@ -59,11 +59,11 @@ class AccountManager {
         isDefault: _accounts[i].id == accountId,
       );
     }
-    await _saveAccountsToBackend(userId);
+    await _saveAccounts(userId);
   }
 
-  Future<void> _saveAccountsToBackend(int userId) async {
-    await ExpenseSupabaseService.saveAccounts(_accounts, userId: userId);
+  Future<void> _saveAccounts(int userId) async {
+    await LocalStore.saveAccounts(_accounts, userId: userId);
   }
 
   void clear() {

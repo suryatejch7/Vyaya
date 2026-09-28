@@ -8,7 +8,7 @@ String _norm(String? s) =>
     (s ?? '').toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
 
 void _accept(String text, double amount, bool isDebit, String? merchant,
-    {String source = 'sms', String? flag}) {
+    {String source = 'sms', String? flag, List<String> absent = const []}) {
   final r = TransactionParser.parse(text,
       source: source, postedAt: DateTime(2026, 8, 16, 10));
   expect(r.isOk, isTrue, reason: 'rejected (${r.rejectReason}): $text');
@@ -19,6 +19,9 @@ void _accept(String text, double amount, bool isDebit, String? merchant,
     expect(_norm(t.merchant), _norm(merchant), reason: text);
   }
   if (flag != null) expect(t.flags, contains(flag), reason: text);
+  for (final f in absent) {
+    expect(t.flags, isNot(contains(f)), reason: text);
+  }
 }
 
 void _reject(String text, {String source = 'sms', String? sender}) {
@@ -132,7 +135,7 @@ void main() {
   test('#102 debit 120', () => _accept('Rs.120.00 debited from A/c **1234 on 27-09-26 to VPA swiggy.stores@axb (UPI Ref No 626491234567). Not you? Call 18002586161', 120.0, true, 'Swiggy Stores'));
   test('#103 debit 30', () => _accept('Paid ₹30 to Sharma Ji Chaiwala from Paytm Payments Bank', 30.0, true, 'Sharma Ji Chaiwala', source: 'notification'));
   test('#104 debit 200', () => _accept('₹200 sent to Rahul', 200.0, true, 'Rahul', source: 'notification'));
-  test('#105 debit 12000', () => _accept('Payment of ₹12,000 towards your HDFC credit card is successful', 12000.0, true, null, source: 'notification'));
+  test('#105 debit 12000', () => _accept('Payment of ₹12,000 towards your HDFC credit card is successful', 12000.0, true, null, source: 'notification', flag: 'card-bill'));
   test('#106 credit 499', () => _accept('Your refund of ₹499.00 has been processed', 499.0, false, null, source: 'notification'));
   test('#107 rejects', () => _reject('Your order of 2 items worth ₹1,299 has been shipped', source: 'notification'));
   test('#108 debit 1500', () => _accept('Your A/c XX1234 is debited for Rs.1,500.00 on 27-09-26 and A/c of RAHUL is credited (UPI Ref no 626491234567)', 1500.0, true, null));
@@ -154,4 +157,37 @@ void main() {
   test('#124 debit 999', () => _accept('Dear Customer, Rs.999.00 has been debited from your A/c XX4321 towards NETFLIX COM on 27-09-26. Available balance Rs.5,000', 999.0, true, 'Netflix'));
   test('#125 debit 60', () => _accept('UPI txn of Rs 60 to NAMMA METRO successful. A/c XX1234. Ref 626491234567', 60.0, true, 'Namma Metro'));
   test('#126 debit 350', () => _accept('Rs 350.00 debited via UPI on 27-09-2026 to RAPIDO. A/c XX1234 UPI Ref 626491234567 -Federal Bank', 350.0, true, 'Rapido'));
+
+  // Credit card bill payments and own-account transfers.
+  test('#127 card bill payment dropped', () => _reject('Payment of Rs 5,000.00 has been received towards your ICICI Bank Credit Card XX1234 on 14-Aug-26. Thank you.'));
+  test('#128 card bill payment dropped', () => _reject('Dear Customer, payment of INR 12,500 received on your HDFC Bank Credit Card ending 4321.'));
+  test('#129 card bill payment dropped', () => _reject('We have received payment of Rs.8,000.00 on your SBI Credit Card ending 5566 on 03/09/26.'));
+  test('#130 card bill payment dropped', () => _reject('Thank you for your payment of Rs 3,450 towards your Axis Bank Credit Card XX9087.'));
+  test('#131 card bill payment dropped', () => _reject('Your payment of Rs 5000 has been credited to your credit card account XX1234.'));
+  test('#132 card bill payment dropped', () => _reject('CC payment of Rs 5000 received. Thank you. -SBI Card'));
+  test('#133 card bill 5000', () => _accept('Rs.5000.00 debited from A/c XX7788 on 14-08-26 towards CC payment. Avl Bal Rs 20000 -ICICI', 5000.0, true, null, flag: 'card-bill'));
+  test('#134 card bill 12000', () => _accept('Rs 12,000 debited from your a/c XX1234 for Credit Card bill payment via BillDesk.', 12000.0, true, null, flag: 'card-bill'));
+  test('#135 card bill 5000', () => _accept('Paid Rs 5000 to CRED Club via UPI. UPI Ref 123456789012', 5000.0, true, null, flag: 'card-bill'));
+  test('#136 card bill 4500', () => _accept('You paid ₹4,500 to CRED', 4500.0, true, null, flag: 'card-bill'));
+  test('#137 not a bill or transfer 500', () => _accept('Payment of Rs 500 to Swiggy successful using ICICI Credit Card XX1234', 500.0, true, 'Swiggy', absent: const ['card-bill', 'transfer']));
+  test('#138 not a bill or transfer 3200', () => _accept('INR 3,200.00 spent on ICICI Bank Card XX1234 on 12-Aug-26 at AMAZON.', 3200.0, true, 'Amazon', absent: const ['card-bill', 'transfer']));
+  test('#139 not a bill or transfer 500', () => _accept('Refund of Rs 500 has been credited to your credit card XX1234 from Flipkart', 500.0, false, 'Flipkart', absent: const ['card-bill', 'transfer']));
+  test('#140 not a bill or transfer 799', () => _accept('Rs 799 debited from HDFC Credit Card XX1234 at NETFLIX on 01-09-26', 799.0, true, 'Netflix', absent: const ['card-bill', 'transfer']));
+  test('#141 not a bill or transfer 250', () => _accept('Paid ₹250 to Swiggy via CRED UPI', 250.0, true, 'Swiggy', absent: const ['card-bill', 'transfer']));
+  test('#142 own transfer 10000', () => _accept('Rs 10000 transferred from A/c XX1234 to A/c XX5678 (self). Ref 123456789012', 10000.0, true, null, flag: 'transfer'));
+  test('#143 own transfer 2000', () => _accept('Rs 2000 sent via IMPS to Self from A/c XX1234. Ref 612345678901', 2000.0, true, null, flag: 'transfer'));
+  test('#144 own transfer 5000', () => _accept('Rs 5000 debited from A/c XX1234 and credited to A/c XX5678. UPI Ref 1234', 5000.0, true, null, flag: 'transfer'));
+  test('#145 own transfer 3000', () => _accept('Rs 3000 transferred to your own account XX9876 from A/c XX1234', 3000.0, true, null, flag: 'transfer'));
+  test('#146 not a bill or transfer 500', () => _accept('Rs 500 debited from A/c XX1234 to VPA rahul@okaxis. UPI Ref 123456789012', 500.0, true, 'Rahul', absent: const ['card-bill', 'transfer']));
+  test('#147 not a bill or transfer 150', () => _accept('Sent Rs 150 to Selfie Studio via UPI', 150.0, true, 'Selfie Studio', absent: const ['card-bill', 'transfer']));
+  test('#148 not a bill or transfer 2000', () => _accept('Rs 2,000 credited to A/c XX1234 by NEFT from ACME PVT LTD', 2000.0, false, 'Acme', absent: const ['card-bill', 'transfer']));
+  test('#149 not a bill or transfer 450', () => _accept('Your A/c XX1234 has been debited by Rs 450 for purchase at DMART using card XX9876', 450.0, true, 'Dmart', absent: const ['card-bill', 'transfer']));
+  test('#150 not a bill or transfer 299', () => _accept('Your payment of Rs 299 to Netflix has been posted on your credit card XX1234', 299.0, true, 'Netflix', absent: const ['card-bill', 'transfer']));
+  test('#151 not a bill or transfer 500', () => _accept('Thank you for the payment of Rs 500 made on 12-Aug using your credit card at Swiggy', 500.0, true, 'Swiggy', absent: const ['card-bill', 'transfer']));
+  test('#152 not a bill or transfer 500', () => _accept('Payment of Rs 500 received from Rahul. Credited to your A/c XX1234', 500.0, false, 'Rahul', absent: const ['card-bill', 'transfer']));
+  test('#153 card bill payment dropped', () => _reject('Your payment of Rs.5,000 has been realised towards your Kotak Card. Thank you'));
+  test('#154 card bill 12000', () => _accept('Payment of ₹12,000 towards your HDFC credit card is successful', 12000.0, true, null, flag: 'card-bill'));
+  test('#155 not a bill or transfer 500', () => _accept('Paid Rs 500 for order using your credit card XX1234', 500.0, true, null, absent: const ['card-bill', 'transfer']));
+  test('#156 not a bill or transfer 500', () => _accept('Paid Rs 500 to Swiggy using your credit card', 500.0, true, 'Swiggy', absent: const ['card-bill', 'transfer']));
+  test('#157 card bill 8000', () => _accept('Bill payment of Rs 8,000 for your ICICI credit card was successful', 8000.0, true, null, flag: 'card-bill'));
 }

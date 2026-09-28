@@ -19,7 +19,7 @@ class ParsedTransaction {
   final DateTime occurredAt;
   final double confidence;
 
-  /// 'link', 'reversal', 'transfer', 'atm'
+  /// 'link', 'reversal', 'transfer', 'atm', 'card-bill'
   final Set<String> flags;
 
   const ParsedTransaction({
@@ -147,6 +147,31 @@ class TransactionParser {
   static final _withdrawal = _ci(r"\b(withdrawn|withdrawal)\b");
   static final _atm = _ci(r"\batm\b");
 
+  // Credit card bill payments. The card's "payment received" message isn't
+  // income, and the bank's "debited towards CC payment" isn't new spending:
+  // the card purchases themselves are already logged.
+  static const _cardRef =
+      r"\b(?:towards|on|to|for|in|against)\s+(?:your\s+|the\s+)?(?:[a-z]+\s+){0,4}?card\b";
+  static final _cardBillReceived = _ci(
+      r"\bpayment\b.{0,80}?\b(?:received|credited|realised|realized)\b.{0,40}?" +
+          _cardRef +
+          r"|\b(?:received|credited)\b.{0,20}?\bpayment\b.{0,60}?" +
+          _cardRef +
+          r"|\bthank\s*you\s*for\s*(?:your\s*|the\s*)?payment\b.{0,60}?" +
+          _cardRef);
+  static final _ccBill = _ci(
+      r"\b(cc|credit\s*card)\s*(bill|dues|payment|pymt|pmt)\b|\b(to|towards)\s+cred(\s*club)?\b|\b(payment|paid|bill)\b.{0,40}?\b(towards|for)\s+(your\s+|the\s+)?((?!using|via|with|through|from|at)[a-z]+\s+){0,3}?credit\s*card\b");
+  static final _notBill = _ci(r"\b(refund(ed)?|revers(ed|al)|cashback)\b");
+  static final _receivedWord = _ci(r"\b(received|credited)\b");
+  static final _outgoingWord =
+      _ci(r"\b(debited|deducted|paid|sent|spent|withdrawn)\b");
+
+  // Transfers between your own accounts ("to Self", "own a/c").
+  static final _selfTransfer =
+      _ci(r"\bself\b|\bown\s*(a\/c|ac|acct|account)\b");
+  static final _transferToAc = _ci(
+      r"\b(transferred|trf|sent)\b.{0,40}?\bto\s+(your\s+)?(a\/c|ac|acct|account)\b");
+
   /// True for SMS senders that are personal phone numbers (scams). Real bank
   /// SMS come from alphanumeric DLT headers like "VM-HDFCBK".
   static bool isPersonalNumber(String? sender) {
@@ -176,6 +201,10 @@ class TransactionParser {
     if (_future.hasMatch(text)) return ParseResult.reject('future');
     if (!_movement.hasMatch(text)) return ParseResult.reject('no-movement');
 
+    if (_cardBillReceived.hasMatch(text) && !_notBill.hasMatch(text)) {
+      return ParseResult.reject('card-bill');
+    }
+
     final amount = _extractAmount(text);
     if (amount == null) return ParseResult.reject('no-amount');
 
@@ -188,12 +217,22 @@ class TransactionParser {
     final allLast4 = _extractAllLast4(text);
     final merchant = _extractMerchant(text);
 
+    // Card bill: the card-side "payment received" is dropped; the bank-side
+    // debit is kept but flagged so it's never auto-added.
+    final cardBill = _ccBill.hasMatch(text) && !_notBill.hasMatch(text);
+    final cardSide = !isDebit ||
+        (_receivedWord.hasMatch(text) && !_outgoingWord.hasMatch(text));
+    if (cardBill && cardSide) return ParseResult.reject('card-bill');
+
     final flags = <String>{};
+    if (cardBill) flags.add('card-bill');
     if (_link.hasMatch(text)) flags.add('link');
     if (_reversal.hasMatch(text)) flags.add('reversal');
-    if (allLast4.length >= 2 &&
-        _debitedWord.hasMatch(text) &&
-        _creditedWord.hasMatch(text)) {
+    if ((allLast4.length >= 2 &&
+            _debitedWord.hasMatch(text) &&
+            _creditedWord.hasMatch(text)) ||
+        _selfTransfer.hasMatch(text) ||
+        (allLast4.length >= 2 && _transferToAc.hasMatch(text))) {
       flags.add('transfer');
     }
     if (_withdrawal.hasMatch(text) && _atm.hasMatch(text)) flags.add('atm');

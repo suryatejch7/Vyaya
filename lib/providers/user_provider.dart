@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_settings.dart' as models;
-import '../services/supabase_service.dart';
+import '../services/local_store.dart';
 import 'expense_provider.dart';
 
 class UserProvider extends ChangeNotifier {
@@ -30,10 +30,10 @@ class UserProvider extends ChangeNotifier {
       final userId = prefs.getInt('userId');
       
       if (userId != null && userId > 0) {
-        final user = await ExpenseSupabaseService.getUserById(userId);
+        final user = await LocalStore.getUserById(userId);
         if (user != null) {
           _currentUser = user;
-          _userSettings = await ExpenseSupabaseService.getUserSettings(userId: userId);
+          _userSettings = await LocalStore.getUserSettings(userId: userId);
         } else {
           await clearUser();
         }
@@ -53,13 +53,13 @@ class UserProvider extends ChangeNotifier {
     _errorMessage = null;
     
     try {
-      final exists = await ExpenseSupabaseService.isUsernameTaken(userName);
+      final exists = await LocalStore.isUsernameTaken(userName);
       if (exists) {
         _errorMessage = 'Username already exists';
         return false;
       }
-      final user = await ExpenseSupabaseService.createUser(userName);
-      final settings = await ExpenseSupabaseService.createDefaultUserSettings(user.id);
+      final user = await LocalStore.createUser(userName);
+      final settings = await LocalStore.createDefaultUserSettings(user.id);
       await _saveUserToStorage(user);
       _currentUser = user;
       _userSettings = settings;
@@ -78,12 +78,12 @@ class UserProvider extends ChangeNotifier {
     _errorMessage = null;
     
     try {
-      final user = await ExpenseSupabaseService.getUserByUsername(userName);
+      final user = await LocalStore.getUserByUsername(userName);
       if (user == null) {
         _errorMessage = 'User not found';
         return false;
       }
-      final settings = await ExpenseSupabaseService.getUserSettings(userId: user.id);
+      final settings = await LocalStore.getUserSettings(userId: user.id);
       await _saveUserToStorage(user);
       _currentUser = user;
       _userSettings = settings;
@@ -102,12 +102,12 @@ class UserProvider extends ChangeNotifier {
     _errorMessage = null;
     
     try {
-      final user = await ExpenseSupabaseService.getUserById(userId);
+      final user = await LocalStore.getUserById(userId);
       if (user == null) {
         _errorMessage = 'User not found';
         return false;
       }
-      final settings = await ExpenseSupabaseService.getUserSettings(userId: user.id);
+      final settings = await LocalStore.getUserSettings(userId: user.id);
       await _saveUserToStorage(user);
       _currentUser = user;
       _userSettings = settings;
@@ -123,7 +123,7 @@ class UserProvider extends ChangeNotifier {
   }
   Future<void> updateUserSettings(models.UserSettings settings) async {
     try {
-      await ExpenseSupabaseService.saveUserSettings(settings);
+      await LocalStore.saveUserSettings(settings);
       _userSettings = settings;
       notifyListeners();
     } catch (e) {
@@ -139,7 +139,7 @@ class UserProvider extends ChangeNotifier {
     
     try {
       
-      await ExpenseSupabaseService.updateUserName(userName, userId: _currentUser!.id);
+      await LocalStore.updateUserName(userName, userId: _currentUser!.id);
       _currentUser = models.User(
         id: _currentUser!.id,
         userName: userName,
@@ -160,7 +160,7 @@ class UserProvider extends ChangeNotifier {
     }
     
     try {
-      await ExpenseSupabaseService.updateMonthlyBudget(budget, userId: _currentUser!.id);
+      await LocalStore.updateMonthlyBudget(budget, userId: _currentUser!.id);
       if (_userSettings != null) {
         _userSettings = _userSettings!.copyWith(monthlyBudget: budget);
         notifyListeners();
@@ -192,7 +192,7 @@ class UserProvider extends ChangeNotifier {
   }
   Future<List<models.User>> getAllUsers() async {
     try {
-      final users = await ExpenseSupabaseService.getAllUsers();
+      final users = await LocalStore.getAllUsers();
       return users;
     } catch (e) {
       _errorMessage = 'Failed to fetch users: $e';

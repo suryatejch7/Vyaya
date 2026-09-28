@@ -6,10 +6,10 @@ import '../providers/capture_provider.dart';
 import 'detected_payments_screen.dart';
 import '../models/expense_models.dart';
 import '../services/notification_service.dart';
-import '../services/supabase_service.dart';
+import '../services/local_store.dart';
 import '../services/export_service.dart';
 import '../services/backup_service.dart';
-import 'crop_calibration_screen.dart';
+// import 'crop_calibration_screen.dart'; // screenshot scanning off (offline build)
 import 'recurring_screen.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -308,17 +308,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   onTap: () => _open(SettingsPage.autoDetect),
                 ),
-                _row(
-                  icon: Icons.crop_free_rounded,
-                  color: Colors.deepOrange,
-                  title: 'PhonePe Screenshot Scanning',
-                  subtitle: 'Crop calibration',
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const CropCalibrationScreen()),
-                  ),
-                ),
+                // Screenshot scanning is disabled (offline build).
+                // _row(
+                //   icon: Icons.crop_free_rounded,
+                //   color: Colors.deepOrange,
+                //   title: 'PhonePe Screenshot Scanning',
+                //   subtitle: 'Crop calibration',
+                //   onTap: () => Navigator.push(
+                //     context,
+                //     MaterialPageRoute(
+                //         builder: (context) => const CropCalibrationScreen()),
+                //   ),
+                // ),
               ]),
 
               _groupLabel('NOTIFICATIONS'),
@@ -1827,7 +1828,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               final captureProvider = context.read<CaptureProvider>();
               final navigator = Navigator.of(context);
 
-              await ExpenseSupabaseService.resetAllData();
+              await LocalStore.resetAllData();
               expenseProvider.clearUserData();
               await userProvider.clearUser();
 
@@ -1850,53 +1851,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showDeleteAccountDialog(BankAccount account) {
-    showDialog(
+  /// Deletes a bank account. If transactions (or recurring entries) use it,
+  /// asks where to move them first so they aren't left pointing at an
+  /// account that no longer exists.
+  Future<void> _showDeleteAccountDialog(BankAccount account) async {
+    final provider = context.read<ExpenseProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final used = provider.accountUsageCount(account.id);
+    final others =
+        provider.accounts.where((a) => a.id != account.id).toList();
+
+    final choice = await showDialog<({String? moveTo})>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF2A2A2A),
-        title: const Text(
-          'Delete Account',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: Text(
-          'Are you sure you want to delete "${account.name}"?',
-          style: const TextStyle(color: Colors.white),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final navigator = Navigator.of(context);
-              final scaffoldMessenger = ScaffoldMessenger.of(context);
-              final provider = context.read<ExpenseProvider>();
+      builder: (context) => _DeleteAccountDialog(
+        account: account,
+        usedCount: used,
+        others: others,
+      ),
+    );
+    if (choice == null) return; // cancelled
 
-              await provider.removeAccount(account.id);
-              navigator.pop();
+    try {
+      await provider.removeAccount(account.id, moveTo: choice.moveTo);
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Couldn\'t delete account: $e')),
+      );
+      return;
+    }
 
-              if (mounted) {
-                scaffoldMessenger.showSnackBar(
-                  SnackBar(
-                    content: Text('Account "${account.name}" deleted!'),
-                    backgroundColor: Colors.red,
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
+    final target = choice.moveTo == null
+        ? null
+        : others.where((a) => a.id == choice.moveTo).firstOrNull?.name;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(used > 0 && target != null
+            ? '"${account.name}" deleted · $used moved to $target'
+            : '"${account.name}" deleted'),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
-
 }
 
 /// Second confirmation: lists categories that already have logged expenses,
@@ -2014,6 +2009,99 @@ class _LoggedExpensesDialogState extends State<_LoggedExpensesDialog> {
           child: Text(_moveTo.values.any((v) => v != _keep)
               ? 'Move & delete'
               : 'Delete'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Confirms deleting a bank account. When it has transactions, lets you
+/// pick another account to move them to (or leave them unassigned).
+/// Pops (moveTo: id-or-null), or null when cancelled.
+class _DeleteAccountDialog extends StatefulWidget {
+  final BankAccount account;
+  final int usedCount;
+  final List<BankAccount> others;
+
+  const _DeleteAccountDialog({
+    required this.account,
+    required this.usedCount,
+    required this.others,
+  });
+
+  @override
+  State<_DeleteAccountDialog> createState() => _DeleteAccountDialogState();
+}
+
+class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
+  static const _none = '__none__';
+  late String _moveTo = widget.others.isEmpty
+      ? _none
+      : (widget.others.where((a) => a.isDefault).firstOrNull ??
+              widget.others.first)
+          .id;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = widget.usedCount;
+    final hasEntries = n > 0;
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF2A2A2A),
+      title: const Text('Delete Account', style: TextStyle(color: Colors.white)),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              hasEntries
+                  ? '"${widget.account.name}" is used by $n ${n == 1 ? 'entry' : 'entries'} (transactions and recurring).'
+                  : 'Are you sure you want to delete "${widget.account.name}"?',
+              style: const TextStyle(color: Colors.white),
+            ),
+            if (hasEntries) ...[
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: _moveTo,
+                isExpanded: true,
+                dropdownColor: const Color(0xFF1E1E1E),
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Move them to',
+                  labelStyle: TextStyle(color: Colors.grey.shade400),
+                  isDense: true,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+                items: [
+                  for (final a in widget.others)
+                    DropdownMenuItem<String>(
+                      value: a.id,
+                      child: Text(a.isDefault ? '${a.name} (default)' : a.name),
+                    ),
+                  const DropdownMenuItem<String>(
+                    value: _none,
+                    child: Text('No account (leave unassigned)'),
+                  ),
+                ],
+                onChanged: (v) => setState(() => _moveTo = v ?? _none),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          onPressed: () => Navigator.of(context)
+              .pop((moveTo: _moveTo == _none ? null : _moveTo)),
+          child: Text(hasEntries && _moveTo != _none ? 'Move & delete' : 'Delete'),
         ),
       ],
     );

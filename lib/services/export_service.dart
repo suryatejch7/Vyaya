@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/expense_models.dart';
 import '../providers/expense_provider.dart';
-import 'supabase_service.dart';
+import 'local_store.dart';
 
 /// Service for exporting expense and income data to CSV.
 class ExportService {
@@ -18,9 +18,9 @@ class ExportService {
       // Read from storage, not provider.expenses: the provider only holds the
       // pages loaded so far, so older expenses would be missing.
       final expenses =
-          await ExpenseSupabaseService.getExpenses(userId: provider.userId);
+          await LocalStore.getExpenses(userId: provider.userId);
       final incomes =
-          await ExpenseSupabaseService.getIncomes(userId: provider.userId);
+          await LocalStore.getIncomes(userId: provider.userId);
 
       final file = await _generateCsv(
         expenses: expenses,

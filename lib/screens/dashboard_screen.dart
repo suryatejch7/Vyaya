@@ -124,29 +124,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
-    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
-  }
-
-  void _onScroll() {
-    if (!_scrollController.hasClients) return;
-
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    final currentScroll = _scrollController.position.pixels;
-    final threshold = maxScroll * 0.8;
-
-    if (currentScroll >= threshold) {
-      final provider = context.read<ExpenseProvider>();
-      if (provider.hasMoreExpenses && !provider.isLoadingMore) {
-        provider.loadMoreExpenses();
-      }
-    }
   }
 
   @override
@@ -274,26 +257,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Consumer<ExpenseProvider>(
               builder: (context, expenseProvider, child) {
                 return _buildTransactionsList(expenseProvider);
-              },
-            ),
-            // Loading indicator for infinite scroll
-            Consumer<ExpenseProvider>(
-              builder: (context, provider, child) {
-                if (provider.isLoadingMore) {
-                  return const SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                    ),
-                  );
-                }
-                return const SliverToBoxAdapter(child: SizedBox.shrink());
               },
             ),
             const SliverToBoxAdapter(child: SizedBox(height: 100)),

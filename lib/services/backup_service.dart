@@ -8,8 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/expense_provider.dart';
 import '../providers/user_provider.dart';
 import '../providers/capture_provider.dart';
-import 'cache_service.dart';
-import 'supabase_service.dart';
+import 'local_store.dart';
 
 /// Full JSON backup & restore of all app data.
 ///
@@ -166,9 +165,7 @@ class BackupService {
       }
       await _writeMapToPrefs(prefs, json);
 
-      // Stale expense/settings cache would otherwise show pre-restore data.
-      await CacheService.clearAllCache();
-      await ExpenseSupabaseService.initialize();
+      await LocalStore.initialize();
 
       // Select the restored user (also writes the `userId` pref, which the
       // backup doesn't contain) and reload everything in place.

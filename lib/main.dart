@@ -5,24 +5,20 @@ import 'providers/expense_provider.dart';
 import 'providers/user_provider.dart';
 import 'providers/capture_provider.dart';
 import 'screens/main_screen.dart';
-import 'services/supabase_service.dart';
+import 'services/local_store.dart';
 import 'services/backup_service.dart';
 import 'services/notification_service.dart';
-import 'services/cache_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/undo_bar.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Local Storage
-  await ExpenseSupabaseService.initialize();
+  // On-device storage (SharedPreferences)
+  await LocalStore.initialize();
 
   // Restore from auto-backup file if SharedPreferences was wiped
   await BackupService.restoreFromAutoBackupIfNeeded();
-
-  // Initialize Cache Service
-  await CacheService.init();
 
   // Initialize Notifications
   await NotificationService.initialize();

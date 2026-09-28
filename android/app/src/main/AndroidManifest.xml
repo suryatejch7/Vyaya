@@ -1,11 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.android.vyayasans">
 
-    <!-- Permissions for OCR and image processing -->
+    <!-- Vyaya is fully offline: no INTERNET permission (release builds also
+         strip it from libraries, see src/release/AndroidManifest.xml). -->
+
+    <!-- Screenshot scanning (ML Kit OCR) is disabled; its permissions too.
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.INTERNET" />
+    -->
     
     <!-- Notification permissions -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
@@ -17,7 +20,7 @@
         android:label="Vyaya"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules">
 
@@ -45,19 +48,19 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
 
-            <!-- Intent filter for receiving shared images -->
+            <!-- Sharing screenshots into Vyaya feeds screenshot scanning,
+                 which is disabled for the offline build.
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
             </intent-filter>
-
-            <!-- Intent filter for receiving multiple shared images -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
             </intent-filter>
+            -->
         </activity>
 
         <!-- Don't delete the meta-data below.

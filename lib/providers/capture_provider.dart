@@ -9,7 +9,7 @@ import '../models/expense_models.dart';
 import '../services/capture/capture_models.dart';
 import '../services/capture/merchant_categorizer.dart';
 import '../services/capture/transaction_parser.dart';
-import '../services/supabase_service.dart';
+import '../services/local_store.dart';
 import 'expense_provider.dart';
 
 /// Auto-detects payments from bank SMS and payment-app notifications.
@@ -85,18 +85,18 @@ class CaptureProvider extends ChangeNotifier {
 
   Future<void> _load() async {
     if (_userId == 0) return;
-    final raw = await ExpenseSupabaseService.getJsonList(_itemsKey, userId: _userId);
+    final raw = await LocalStore.getJsonList(_itemsKey, userId: _userId);
     _items
       ..clear()
       ..addAll(raw.map(DetectedTransaction.fromJson));
     _rules.clear();
-    final rules = ExpenseSupabaseService.getMeta(_rulesKey, userId: _userId);
+    final rules = LocalStore.getMeta(_rulesKey, userId: _userId);
     if (rules != null) {
       try {
         _rules.addAll(Map<String, String>.from(jsonDecode(rules) as Map));
       } catch (_) {}
     }
-    _mode = ExpenseSupabaseService.getMeta(_modeKey, userId: _userId) ?? 'ask';
+    _mode = LocalStore.getMeta(_modeKey, userId: _userId) ?? 'ask';
     notifyListeners();
   }
 
@@ -114,12 +114,12 @@ class CaptureProvider extends ChangeNotifier {
         ..clear()
         ..addAll(keep);
     }
-    await ExpenseSupabaseService.saveJsonList(
+    await LocalStore.saveJsonList(
         _itemsKey, _items.map((i) => i.toJson()).toList(),
         userId: _userId);
   }
 
-  Future<void> _saveRules() => ExpenseSupabaseService.setMeta(
+  Future<void> _saveRules() => LocalStore.setMeta(
       _rulesKey, jsonEncode(_rules),
       userId: _userId);
 
@@ -143,7 +143,7 @@ class CaptureProvider extends ChangeNotifier {
 
   Future<void> setAutoMode(bool auto) async {
     _mode = auto ? 'auto' : 'ask';
-    await ExpenseSupabaseService.setMeta(_modeKey, _mode, userId: _userId);
+    await LocalStore.setMeta(_modeKey, _mode, userId: _userId);
     notifyListeners();
   }
 
@@ -244,11 +244,16 @@ class CaptureProvider extends ChangeNotifier {
     }
   }
 
+  /// Flags that always need a human look: own-account transfers and card
+  /// bill payments aren't new spending, reversals may pair with an earlier
+  /// entry, and links may be scams.
+  static const _reviewFlags = {'transfer', 'card-bill', 'reversal', 'link'};
+
   bool _shouldAutoAdd(DetectedTransaction i) =>
       autoMode &&
       !i.fromImport &&
       i.confidence >= 0.8 &&
-      !i.flags.any((f) => const {'transfer', 'reversal', 'link'}.contains(f));
+      !i.flags.any(_reviewFlags.contains);
 
   // ---------------------------------------------------------- de-duplication
 
@@ -357,6 +362,9 @@ class CaptureProvider extends ChangeNotifier {
       merchant: existing.merchant ?? t.merchant,
       last4: existing.last4 ?? t.last4,
       reference: existing.reference ?? t.reference,
+      // Keep warnings from either report (e.g. the app's "paid to CRED"
+      // marks the bank's plain debit as a card bill).
+      flags: {...existing.flags, ...t.flags}.toList(),
     );
     if (gainedMerchant && existing.isPending) {
       updated = updated.copyWith(
@@ -463,13 +471,25 @@ class CaptureProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> acceptAll() async {
+  /// Adds every pending payment except likely transfers and card bill
+  /// payments, which stay in review (adding them would double count).
+  /// Returns how many were added and how many were left.
+  Future<({int added, int skipped})> acceptAll() async {
+    var added = 0, skipped = 0;
     for (final item in pending) {
+      if (item.flags.any(_notSpendingFlags.contains)) {
+        skipped++;
+        continue;
+      }
       await _addToLedger(item);
+      added++;
     }
     await _save();
     notifyListeners();
+    return (added: added, skipped: skipped);
   }
+
+  static const _notSpendingFlags = {'transfer', 'card-bill'};
 
   Future<void> dismiss(String id) async {
     final item = byId(id);
@@ -602,10 +622,14 @@ class CaptureProvider extends ChangeNotifier {
   /// bank (card vs bank account, last 4 digits as tie-breaker), a newly
   /// created one if you don't have it yet, or your default account when the
   /// message doesn't name a bank.
-  Future<String?> _resolveAccount(DetectedTransaction item) async {
+  Future<String?> _resolveAccount(DetectedTransaction item) async =>
+      (await _findOrCreateAccount(item)).id;
+
+  Future<({String? id, bool created})> _findOrCreateAccount(
+      DetectedTransaction item) async {
     final ep = _expenses!;
     final bank = _detectBank(item);
-    if (bank == null) return ep.defaultAccount?.id;
+    if (bank == null) return (id: ep.defaultAccount?.id, created: false);
     final (bankName, keys, isCard) = bank;
 
     String norm(String s) => s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
@@ -616,10 +640,10 @@ class CaptureProvider extends ChangeNotifier {
     if (candidates.isNotEmpty) {
       if (item.last4 != null) {
         for (final a in candidates) {
-          if (a.name.contains(item.last4!)) return a.id;
+          if (a.name.contains(item.last4!)) return (id: a.id, created: false);
         }
       }
-      return candidates.first.id;
+      return (id: candidates.first.id, created: false);
     }
 
     final account = BankAccount(
@@ -631,13 +655,27 @@ class CaptureProvider extends ChangeNotifier {
       type: isCard ? AccountType.creditCard : AccountType.savings,
     );
     await ep.addAccount(account);
-    return account.id;
+    return (id: account.id, created: true);
   }
 
-  /// Account for the "Edit" flow (creates it if needed, like Add does).
-  Future<String?> accountFor(String id) async {
+  /// Account for the "Edit" flow. Creates it if needed (so the editor can
+  /// show it); `created` tells the caller to call [discardAccountIfUnused]
+  /// afterwards in case the edit is cancelled or another account is picked.
+  Future<({String? id, bool created})> accountFor(String id) async {
     final item = byId(id);
-    return item == null ? _expenses?.defaultAccount?.id : _resolveAccount(item);
+    if (item == null) {
+      return (id: _expenses?.defaultAccount?.id, created: false);
+    }
+    return _findOrCreateAccount(item);
+  }
+
+  /// Removes an account created by [accountFor] if nothing ended up using it.
+  Future<void> discardAccountIfUnused(String accountId) async {
+    final ep = _expenses;
+    if (ep == null || ep.getAccountById(accountId) == null) return;
+    if (ep.accountUsageCount(accountId) == 0) {
+      await ep.removeAccount(accountId);
+    }
   }
 
   // ---------------------------------------------------------------- labels

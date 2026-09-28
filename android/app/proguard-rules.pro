@@ -2,8 +2,8 @@
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.
 
-# Keep Google Play Core classes
--keep class com.google.android.play.core.** { *; }
+# Play Core isn't included (no Play Store downloads); Flutter's engine
+# references it only for deferred components, so silence R8 about it.
 -dontwarn com.google.android.play.core.**
 
 # Keep Flutter classes
@@ -11,30 +11,24 @@
 -keep class io.flutter.embedding.** { *; }
 -dontwarn io.flutter.**
 
-# Keep ML Kit classes
--keep class com.google.mlkit.** { *; }
--keep class com.google.android.gms.** { *; }
--dontwarn com.google.mlkit.**
--dontwarn com.google.android.gms.**
-
-# Keep Google ML Kit Text Recognition classes
--keep class com.google.mlkit.vision.text.** { *; }
+# ML Kit (screenshot scanning) is disabled for the offline build.
+# -keep class com.google.mlkit.** { *; }
+# -keep class com.google.android.gms.** { *; }
+# -dontwarn com.google.mlkit.**
+# -dontwarn com.google.android.gms.**
+# -keep class com.google.mlkit.vision.text.** { *; }
 
 
 # Keep OpenCV Dart plugin classes
 -keep class org.opencv.** { *; }
 -dontwarn org.opencv.**
 
-# Keep image processing classes
--keep class androidx.exifinterface.** { *; }
--keep class androidx.camera.** { *; }
-
-# Keep Glide classes
--keep class com.bumptech.glide.** { *; }
--dontwarn com.bumptech.glide.**
+# Image/camera libraries (screenshot scanning, disabled)
+# -keep class androidx.exifinterface.** { *; }
+# -keep class androidx.camera.** { *; }
 
 # Keep plugin classes
--keep class com.kasem.receive_sharing_intent.** { *; }
+# -keep class com.kasem.receive_sharing_intent.** { *; }  # screenshot sharing (disabled)
 -keep class io.flutter.plugins.** { *; }
 
 # General Flutter plugin rules
@@ -64,5 +58,5 @@
 -dontwarn sun.misc.Unsafe
 
 # Fix for receive_sharing_intent and shared_preferences path issues
--dontwarn com.kasem.**
+# -dontwarn com.kasem.**  # screenshot sharing (disabled)
 -dontwarn io.flutter.plugins.sharedpreferences.**

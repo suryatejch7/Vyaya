@@ -4,8 +4,9 @@ import 'dashboard_screen.dart';
 import 'categories_screen.dart';
 import 'add_expense_screen.dart';
 import 'add_income_screen.dart';
-import 'transaction_scanner_screen.dart';
-import '../services/sharing_intent_service.dart';
+// Screenshot scanning is disabled (offline build) - see README.md.
+// import 'transaction_scanner_screen.dart';
+// import '../services/sharing_intent_service.dart';
 import '../services/intent_service.dart';
 import '../widgets/liquid_glass_nav_bar.dart';
 import '../widgets/expandable_fab.dart';
@@ -47,9 +48,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       const CategoriesScreen(),
     ]);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      SharingIntentService.setContext(context);
+      // SharingIntentService.setContext(context); // screenshot scanning off
       IntentService.setContext(context);
-      _checkDataConsistency();
     });
   }
 
@@ -74,21 +74,21 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _checkDataConsistency() async {
-    if (!mounted) return;
-
-    final expenseProvider = context.read<ExpenseProvider>();
-
-    final isConsistent = await expenseProvider.verifyDataConsistency();
-
-    if (!isConsistent && mounted) {
-      await expenseProvider.reloadExpenses();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // Back: first leaves selection mode, then returns to Home from another
+    // tab, and only exits the app from Home.
+    return PopScope(
+      canPop: !_isSelectionMode && _currentIndex == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_isSelectionMode) {
+          _clearSelection?.call();
+        } else if (_currentIndex != 0) {
+          setState(() => _currentIndex = 0);
+        }
+      },
+      child: Scaffold(
       extendBody: true,
       body: Stack(
         children: [
@@ -129,18 +129,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     ),
                   );
                 },
-                onScanReceipt: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const TransactionScannerScreen(),
-                    ),
-                  );
-                },
+                // Screenshot scanning is disabled (offline build).
+                // onScanReceipt: () {
+                //   Navigator.push(
+                //     context,
+                //     MaterialPageRoute(
+                //       builder: (context) => const TransactionScannerScreen(),
+                //     ),
+                //   );
+                // },
               ),
             ),
         ],
       ),
+    ),
     );
   }
 }
