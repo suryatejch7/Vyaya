@@ -229,9 +229,11 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
               if (value == null || value.trim().isEmpty) {
                 return 'Please enter an amount';
               }
-              if (double.tryParse(value.trim()) == null) {
+              final amount = double.tryParse(value.trim());
+              if (amount == null || !amount.isFinite) {
                 return 'Please enter a valid amount';
               }
+              if (amount <= 0) return 'Amount must be more than 0';
               return null;
             },
           ),
@@ -299,8 +301,15 @@ class _AddIncomeScreenState extends State<AddIncomeScreen> {
         final DateTime? picked = await showDatePicker(
           context: context,
           initialDate: _selectedDate,
-          firstDate: DateTime(2020),
-          lastDate: DateTime.now().add(const Duration(days: 1)),
+          // Widened for an entry already dated outside the range, which
+          // would otherwise crash the picker.
+          firstDate: _selectedDate.isBefore(DateTime(2020))
+              ? _selectedDate
+              : DateTime(2020),
+          // Up to today, like expenses (a future date hid the entry).
+          lastDate: _selectedDate.isAfter(DateTime.now())
+              ? _selectedDate
+              : DateTime.now(),
           builder: (context, child) {
             return Theme(
               data: Theme.of(context).copyWith(

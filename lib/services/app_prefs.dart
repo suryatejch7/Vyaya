@@ -108,6 +108,21 @@ class AppPrefs extends ChangeNotifier {
     await _prefs?.setString('ls_opt_last_account', accountId ?? '');
   }
 
+  // ---- Remember category per payee (on by default) ----
+
+  /// Adding an expense remembers the payee's category; typing that payee
+  /// again picks it, and auto-detected payments to them get it too.
+  bool get rememberPayeeCategory => _get('payee_category') != '0';
+  Future<void> setRememberPayeeCategory(bool v) =>
+      _set('payee_category', v ? '1' : '0');
+
+  /// Keeps the remembered category after it's renamed or merged away.
+  Future<void> renameLastCategory(String from, String to) async {
+    if (lastCategory == from) {
+      await _prefs?.setString('ls_opt_last_category', to);
+    }
+  }
+
   // ---- Spending pace on Home ----
 
   bool get showSpendingPace => _get('pace') == '1';

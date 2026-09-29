@@ -4,6 +4,7 @@ import '../models/expense_models.dart';
 import '../providers/expense_provider.dart';
 import 'undo_snackbar.dart';
 import '../screens/add_income_screen.dart';
+import '../services/money_format.dart';
 
 class IncomeCard extends StatelessWidget {
   final Income income;
@@ -118,7 +119,7 @@ class IncomeCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '+$currency${income.amount.toStringAsFixed(2)}',
+                    '+$currency${formatAmount(income.amount)}',
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,

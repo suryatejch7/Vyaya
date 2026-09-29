@@ -12,6 +12,10 @@ class MerchantCategorizer {
       'starbucks', 'cafe', 'coffee', 'chai', 'tea', 'restaurant', 'dhaba',
       'bakery', 'sweets', 'food', 'biryani', 'canteen', 'mess', 'juice',
       'haldiram', 'barbeque', 'eatery', 'kitchen', 'tiffin', 'ccd',
+      // groceries
+      'grocery', 'groceries', 'kirana', 'vegetable', 'fruits', 'milk',
+      'dairy', 'big bazaar', 'bigbazaar', 'more retail', 'spencer',
+      'star bazaar', 'jiomart', 'nature basket', 'ratnadeep', 'provision',
     ],
     'Transport': [
       'uber', 'ola', 'rapido', 'irctc', 'metro', 'railway', 'redbus',

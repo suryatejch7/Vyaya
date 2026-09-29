@@ -90,6 +90,7 @@ class NotificationService {
             channelName,
             icon: '@mipmap/ic_launcher',
             styleInformation: BigTextStyleInformation(body),
+            visibility: _lockScreenVisibility,
           ),
         ),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
@@ -103,6 +104,13 @@ class NotificationService {
   }
 
   /// Ids of notifications scheduled but not yet shown.
+  /// With App Lock on, notifications with amounts stay off the lock screen
+  /// (they still show once the phone is unlocked).
+  static NotificationVisibility get _lockScreenVisibility =>
+      AppPrefs.instance.appLockEnabled
+          ? NotificationVisibility.secret
+          : NotificationVisibility.public;
+
   static Future<Set<int>> pendingIds() async {
     try {
       final list = await _notificationsPlugin.pendingNotificationRequests();
@@ -183,7 +191,7 @@ class NotificationService {
       id,
       'Large payment: ₹${amount.toStringAsFixed(0)}',
       payee.isEmpty ? 'Logged just now' : 'To $payee · logged just now',
-      const NotificationDetails(
+      NotificationDetails(
         android: AndroidNotificationDetails(
           'large_payments',
           'Large payments',
@@ -191,6 +199,7 @@ class NotificationService {
           importance: Importance.high,
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
+          visibility: _lockScreenVisibility,
         ),
       ),
     );
@@ -231,6 +240,7 @@ class NotificationService {
           importance: importance,
           priority: _getPriorityFromImportance(importance),
           icon: '@mipmap/ic_launcher',
+          visibility: _lockScreenVisibility,
         ),
       ),
     );

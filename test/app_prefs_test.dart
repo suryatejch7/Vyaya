@@ -12,6 +12,18 @@ Future<AppPrefs> _prefsWith(Map<String, Object> values) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('Remember category per payee', () {
+    test('is on by default', () async {
+      final p = await _prefsWith({});
+      expect(p.rememberPayeeCategory, isTrue);
+    });
+
+    test('can be turned off', () async {
+      final p = await _prefsWith({'ls_opt_payee_category': '0'});
+      expect(p.rememberPayeeCategory, isFalse);
+    });
+  });
+
   group('Week start', () {
     test('defaults to Sunday', () async {
       final p = await _prefsWith({});

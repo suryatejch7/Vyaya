@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/expense_provider.dart';
 import '../providers/user_provider.dart';
 import '../providers/capture_provider.dart';
+import '../models/expense_models.dart';
+import '../models/user_settings.dart';
 import 'local_store.dart';
 import 'app_prefs.dart';
 import 'notification_service.dart';
@@ -26,6 +28,10 @@ class BackupService {
   // -------------------- constants --------------------
   static const String _autoBackupFileName = 'expense_tracker_auto_backup.json';
   static const String _lsPrefix = 'ls_';
+
+  /// The app-lock PIN stays on this phone: it isn't put in shared backups
+  /// and a restore never replaces it.
+  static const String _pinKey = 'ls_opt_pin_hash';
 
   // -------------------- AUTO FILE BACKUP --------------------
 
@@ -50,6 +56,23 @@ class BackupService {
       await file.writeAsString(jsonEncode(backup));
     } catch (_) {
       // Fail silently – auto-backup is a best-effort safety net.
+    }
+  }
+
+  /// Deletes the backup and CSV copies Vyaya saved in its own storage
+  /// (auto-backup, shared backups, exports). Used by Reset All Data.
+  static Future<void> deleteSavedFiles() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      for (final f in dir.listSync().whereType<File>()) {
+        final name = f.uri.pathSegments.last;
+        if (name.startsWith('expense_tracker_') &&
+            (name.endsWith('.json') || name.endsWith('.csv'))) {
+          await f.delete();
+        }
+      }
+    } catch (_) {
+      // Best effort: the data itself is already cleared.
     }
   }
 
@@ -82,7 +105,7 @@ class BackupService {
       final backup = <String, dynamic>{};
 
       for (final key in prefs.getKeys()) {
-        if (key.startsWith(_lsPrefix)) {
+        if (key.startsWith(_lsPrefix) && key != _pinKey) {
           backup[key] = prefs.get(key);
         }
       }
@@ -159,23 +182,54 @@ class BackupService {
         return false;
       }
 
-      // Replace app data only (ls_* keys). Keeps unrelated prefs such as
-      // notification settings intact.
-      final prefs = await SharedPreferences.getInstance();
-      for (final key in prefs.getKeys().toList()) {
-        if (key.startsWith(_lsPrefix)) await prefs.remove(key);
+      // Check the data can actually be read BEFORE touching storage, so a
+      // damaged backup can't wipe what's on the phone.
+      final problem = _findDamage(json);
+      if (problem != null) {
+        _showError(context,
+            'This backup is damaged ($problem). Nothing was changed.');
+        return false;
       }
-      await _writeMapToPrefs(prefs, json);
 
-      await LocalStore.initialize();
+      // Replace app data only (ls_* keys). Keeps unrelated prefs such as
+      // notification settings intact. The current data is kept in memory
+      // and put back if anything below fails.
+      final prefs = await SharedPreferences.getInstance();
+      final previous = <String, dynamic>{
+        for (final k in prefs.getKeys())
+          if (k.startsWith(_lsPrefix)) k: prefs.get(k),
+      };
+      final previousUserId = userProvider.currentUser?.id;
+      try {
+        for (final key in prefs.getKeys().toList()) {
+          if (key.startsWith(_lsPrefix) && key != _pinKey) {
+            await prefs.remove(key);
+          }
+        }
+        await _writeMapToPrefs(
+            prefs, Map.of(json)..remove(_pinKey)); // keep this phone's PIN
 
-      // Select the restored user (also writes the `userId` pref, which the
-      // backup doesn't contain) and reload everything in place.
-      expenseProvider.clearUserData();
-      final ok = await userProvider.loginWithUserId(restoredUserId);
-      if (!ok) {
+        await LocalStore.initialize();
+
+        // Select the restored user (also writes the `userId` pref, which the
+        // backup doesn't contain) and reload everything in place.
+        expenseProvider.clearUserData();
+        final ok = await userProvider.loginWithUserId(restoredUserId);
+        if (!ok) throw userProvider.errorMessage ?? 'user not found';
+      } catch (e) {
+        // Put the phone's data back exactly as it was.
+        for (final key in prefs.getKeys().toList()) {
+          if (key.startsWith(_lsPrefix)) await prefs.remove(key);
+        }
+        await _writeMapToPrefs(prefs, previous);
+        await LocalStore.initialize();
+        if (previousUserId != null) {
+          await userProvider.loginWithUserId(previousUserId);
+          await userProvider.initializeExpenseProvider(expenseProvider);
+          await captureProvider.reload();
+        }
         messenger.showSnackBar(SnackBar(
-          content: Text('Restore failed: ${userProvider.errorMessage ?? 'user not found'}'),
+          content: Text('Restore failed: $e. Your data was not changed.'),
           backgroundColor: Colors.red,
         ));
         return false;
@@ -203,6 +257,33 @@ class BackupService {
       );
       return false;
     }
+  }
+
+  /// Tries to read every expense, income and settings entry in a backup.
+  /// Returns what's wrong, or null when it all reads fine.
+  static String? _findDamage(Map<String, dynamic> data) {
+    for (final e in data.entries) {
+      final k = e.key;
+      try {
+        if (k.startsWith('ls_expenses_')) {
+          for (final m in jsonDecode(e.value as String) as List) {
+            Expense.fromJson(Map<String, dynamic>.from(m as Map));
+          }
+        } else if (k.startsWith('ls_incomes_')) {
+          for (final m in jsonDecode(e.value as String) as List) {
+            Income.fromJson(Map<String, dynamic>.from(m as Map));
+          }
+        } else if (k.startsWith('ls_settings_')) {
+          UserSettings.fromJson(
+              Map<String, dynamic>.from(jsonDecode(e.value as String) as Map));
+        } else if (k == 'ls_users') {
+          jsonDecode(e.value as String) as List;
+        }
+      } catch (_) {
+        return k.replaceFirst(_lsPrefix, '');
+      }
+    }
+    return null;
   }
 
   /// Picks the user id to activate from a backup map: the first user in

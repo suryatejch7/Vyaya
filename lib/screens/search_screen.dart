@@ -628,7 +628,7 @@ class _SearchFilterSheetState extends State<_SearchFilterSheet> {
 
   void _apply() {
     double? parse(String s) {
-      final v = double.tryParse(s.trim());
+      final v = double.tryParse(s.trim().replaceAll(',', '')); // "1,000"
       return (v == null || v < 0) ? null : v;
     }
 

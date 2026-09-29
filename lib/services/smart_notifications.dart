@@ -68,12 +68,15 @@ class SmartNotifications {
 
   // ---------------------------------------------------------------- weekly
 
-  /// Next Sunday at [AppPrefs.weeklySummaryHour] (today if it's Sunday
-  /// before that hour).
+  /// The first day of the next week (Sunday, or Monday when weeks start
+  /// on Monday) at [AppPrefs.weeklySummaryHour]; today if it's that day
+  /// before that hour. The summary covers the full week just ended.
   @visibleForTesting
   static DateTime nextWeeklyTime(DateTime now) {
     var d = DateTime(now.year, now.month, now.day, AppPrefs.weeklySummaryHour);
-    final daysAhead = (DateTime.sunday - now.weekday) % 7;
+    final firstDay =
+        AppPrefs.instance.weekStartsMonday ? DateTime.monday : DateTime.sunday;
+    final daysAhead = (firstDay - now.weekday) % 7;
     d = DateTime(d.year, d.month, d.day + daysAhead, d.hour);
     if (!d.isAfter(now)) d = DateTime(d.year, d.month, d.day + 7, d.hour);
     return d;

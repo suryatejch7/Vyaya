@@ -148,5 +148,10 @@ class ExportService {
       '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
   // Escape double quotes for CSV
-  static String _esc(String s) => s.replaceAll('"', '""');
+  /// Doubles quotes, and puts a ' before text starting with = + - @ so
+  /// Excel / Sheets show it as text instead of running it as a formula.
+  static String _esc(String s) {
+    final v = s.replaceAll('"', '""');
+    return RegExp(r'^[=+\-@\t\r]').hasMatch(v) ? "'$v" : v;
+  }
 }

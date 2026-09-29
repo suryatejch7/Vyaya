@@ -46,6 +46,41 @@ It's built around a simple idea: **you log the money that comes in, you log the 
 
 ---
 
+## How Auto Detect decides what to log
+
+Bank SMS in India are messy: every bank writes them differently, half of them end with an ad, and scammers copy the exact format of real alerts. So before anything gets logged, each message goes through a few checks, all on your phone:
+
+1. **Throw out the noise.** OTPs (only when there's an actual code in the message), ads and offers ("FREE", "bonus", "cash points", "T&C apply", stock tips), payment requests, failed payments and reminders for bills that aren't paid yet ("due on", "will be auto-debited", "due hai", "kal tak", "will be disconnected").
+2. **Catch scams.** Disguised spelling ("Y0UR L0AN", "Rs 56,6OO"), job offers ("daily salary", wa.me links), fake "credited by mistake, please refund", fake reward/refund links, anything asking you to share your PIN or OTP, "call this mobile number to block", and dodgy web addresses (.top, .online, tinyurl…). Real banks give 1800 toll-free numbers, scammers give mobile numbers, so a message with a toll-free number isn't flagged just for having a number in it.
+3. **Read the payment.** The amount (skipping balances and card limits), whether money went out or came in, the payee, the last digits of the account or card, the reference number and the date. It understands formats like `Dr. INR 70`, `Received! INR 2,000`, `Rs.1100credited`, "X has received Rs 21 from your A/c" (that's money *you* sent) and the fancy styled letters some banks use.
+4. **Don't count the same money twice.** A credit card company saying "we received your payment" isn't logged, because the card spending itself is already there.
+5. **Suggest a category** from what you picked for that payee before, or from a keyword list (Swiggy → Food, Big Bazaar / kirana / groceries → Food, Uber → Transport, and so on).
+
+It works in English, Hinglish and romanised regional messages (Hindi, Marathi, Tamil, Telugu, Bengali and others).
+
+### How it's been tested
+
+The parser has been checked against **30,000+ messages** so far, and every mistake found was fixed and turned into a test:
+
+| What | Messages | Result |
+|---|---:|---|
+| Unit tests (`test/transaction_parser_test.dart`) | 204 | All passing |
+| Hand-collected real bank / UPI message formats (development + holdout set) | 126 | All correct |
+| Sample messages from two open-source Indian SMS parser projects | 365 | 356 handled correctly; the other 9 are edge cases handled differently on purpose (e.g. deposit interest is logged as income) |
+| Indian spam & ham SMS dataset | 2,267 | 0 spam logged |
+| Scam & ham SMS in 14 Indian languages | 14,000 | 0 scams logged, 105 real transactions logged |
+| Audited scam / safe SMS set (English + regional) | 1,580 | 0 scams logged, 70 real transactions logged |
+| Indian test suite (spam, scam, ham) | 1,400 | 0 spam/scams logged, 7 real transactions logged |
+| Bank statement narrations (category check) | 11,000 | 0 wrong categories; about 21% are "Investment", which Vyaya has no category for |
+
+**About 19,250 spam, scam and genuine SMS: not a single spam or scam got logged, while the real transactions in them still did.**
+
+New scam wordings and new bank formats will keep turning up, so it'll never be perfect. If a message gets logged when it shouldn't (or gets missed), open an issue with the message, with your personal details removed.
+
+You can run the same checks yourself: put the CSVs in `tool/parser_eval/data/` and run `dart run tool/parser_eval.dart`. There's a short guide in `tool/parser_eval/README.md`.
+
+---
+
 ## Finding your way around
 
 Some features are hidden behind gestures, so here's the cheat sheet:
@@ -104,6 +139,11 @@ For example, a MacroDroid macro that triggers on a UPI "Paid ₹…" notificatio
 ```bash
 flutter pub get
 flutter build apk --release
+```
+
+**Test:**
+```bash
+flutter test
 ```
 
 The APK ends up in `build/app/outputs/flutter-apk/app-release.apk`.

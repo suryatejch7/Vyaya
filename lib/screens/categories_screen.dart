@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../models/expense_models.dart';
 import '../providers/expense_provider.dart';
 import '../widgets/expense_card.dart';
+import '../services/money_format.dart';
 
 class CategoriesScreen extends StatefulWidget {
   const CategoriesScreen({super.key});
@@ -192,7 +193,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                             fit: BoxFit.scaleDown,
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              '₹${totalForPeriod.toStringAsFixed(2)}',
+                              '₹${formatAmount(totalForPeriod)}',
                               style: TextStyle(
                                 fontSize: 28,
                                 fontWeight: FontWeight.bold,
@@ -377,7 +378,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                                           ),
                                           const SizedBox(height: 4),
                                           Text(
-                                            '₹${amount.toStringAsFixed(2)} • ${percentage.toStringAsFixed(1)}%',
+                                            '₹${formatAmount(amount)} • ${percentage.toStringAsFixed(1)}%',
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: const TextStyle(
@@ -405,7 +406,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
-                                              'Budget: ₹${budget.toStringAsFixed(0)}${isOverBudget ? ' (Over by ₹${budgetExcess.toStringAsFixed(0)})' : ''}',
+                                              'Budget: ₹${formatAmount(budget, 0)}${isOverBudget ? ' (Over by ₹${formatAmount(budgetExcess, 0)})' : ''}',
                                               style: TextStyle(
                                                 fontSize: 12,
                                                 color: isOverBudget
@@ -422,7 +423,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                                           CrossAxisAlignment.end,
                                       children: [
                                         Text(
-                                          '₹${amount.toStringAsFixed(0)}',
+                                          '₹${formatAmount(amount, 0)}',
                                           style: TextStyle(
                                             fontSize: 20,
                                             fontWeight: FontWeight.bold,
@@ -941,7 +942,7 @@ class CategoryDetailScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            '₹${totalAmount.toStringAsFixed(2)}',
+                            '₹${formatAmount(totalAmount)}',
                             style: TextStyle(
                               fontSize: 32,
                               fontWeight: FontWeight.bold,

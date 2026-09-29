@@ -197,6 +197,9 @@ class _PinScreenState extends State<PinScreen>
   String _entry = '';
   String? _first; // create mode: the PIN typed the first time
   String? _error;
+  // After 5 wrong PINs the keypad pauses (30 s, then longer each time).
+  int _wrongTries = 0;
+  DateTime? _pausedUntil;
   late final AnimationController _shake = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 350));
 
@@ -222,6 +225,12 @@ class _PinScreenState extends State<PinScreen>
       };
 
   void _tap(String d) {
+    final until = _pausedUntil;
+    if (until != null && DateTime.now().isBefore(until)) {
+      final s = until.difference(DateTime.now()).inSeconds + 1;
+      setState(() => _error = 'Too many tries. Wait $s s');
+      return;
+    }
     if (_entry.length >= AppLock.pinLength) return;
     HapticFeedback.selectionClick();
     setState(() {
@@ -254,9 +263,17 @@ class _PinScreenState extends State<PinScreen>
       case PinMode.unlock:
       case PinMode.verify:
         if (AppLock.checkPin(_entry)) {
+          _wrongTries = 0;
           widget.onDone('');
         } else {
-          _fail('Wrong PIN, try again');
+          _wrongTries++;
+          if (_wrongTries >= 5 && _wrongTries % 5 == 0) {
+            final secs = 30 * (_wrongTries ~/ 5);
+            _pausedUntil = DateTime.now().add(Duration(seconds: secs));
+            _fail('Too many tries. Wait $secs s');
+          } else {
+            _fail('Wrong PIN, try again');
+          }
         }
       case PinMode.create:
         if (_first == null) {

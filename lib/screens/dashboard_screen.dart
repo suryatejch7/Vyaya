@@ -11,6 +11,7 @@ import '../widgets/income_card.dart';
 import '../widgets/category_summary.dart';
 import '../services/app_prefs.dart';
 import 'savings_screen.dart';
+import '../services/money_format.dart';
 
 enum RecentViewType { all, creditCard }
 
@@ -739,14 +740,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          AppPrefs.instance.hideHomeTotals
-                              ? '$currency••••'
-                              : '$currency${monthTotal.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            color: Colors.orange,
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
+                        // Rebuilds when "Hide totals" is switched.
+                        ListenableBuilder(
+                          listenable: AppPrefs.instance,
+                          builder: (context, _) => Text(
+                            AppPrefs.instance.hideHomeTotals
+                                ? '$currency••••'
+                                : '$currency${formatAmount(monthTotal)}',
+                            style: const TextStyle(
+                              color: Colors.orange,
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ],
@@ -887,7 +892,7 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
         final hidden = canHide && !_peek;
         // Masks a figure while totals are hidden.
         String money(double v, int decimals) =>
-            hidden ? '$currency••••' : '$currency${v.toStringAsFixed(decimals)}';
+            hidden ? '$currency••••' : '$currency${formatAmount(v, decimals)}';
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -900,11 +905,16 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
                   onTap: expenseProvider.previousViewMonth,
                 ),
                 const SizedBox(width: 2),
-                Text(
-                  isCurrent
-                      ? 'This Month\'s Spending'
-                      : 'Spent in ${DateFormat('MMMM yyyy').format(expenseProvider.viewMonth)}',
-                  style: const TextStyle(fontSize: 16, color: Colors.grey),
+                // Shrinks with "…" instead of overflowing at large font sizes.
+                Flexible(
+                  child: Text(
+                    isCurrent
+                        ? 'This Month\'s Spending'
+                        : 'Spent in ${DateFormat('MMMM yyyy').format(expenseProvider.viewMonth)}',
+                    style: const TextStyle(fontSize: 16, color: Colors.grey),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 const SizedBox(width: 2),
                 _MonthArrow(
@@ -958,7 +968,7 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Text(
-                        hidden ? 'Over' : '+$currency${budgetExcess.toStringAsFixed(0)} over',
+                        hidden ? 'Over' : '+$currency${formatAmount(budgetExcess, 0)} over',
                         style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,

@@ -51,6 +51,12 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   bool _isInitialized = false;
   bool _isSaving = false;
 
+  // "Remember category per payee": typing a payee used before picks the
+  // category used for them last time, until a category is tapped by hand.
+  bool _categoryTouched = false;
+  String? _defaultCategory;
+  String? _payeePickedFor; // payee whose category was picked (for the hint)
+
   @override
   void initState() {
     super.initState();
@@ -84,10 +90,12 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         _titleController.text = widget.prefilledPayee!;
       }
 
-      if (widget.prefilledCategory != null &&
-          widget.prefilledCategory!.isNotEmpty) {
-        _selectedCategory = widget.prefilledCategory!;
-      }
+      // widget.prefilledCategory is matched to a real category in
+      // didChangeDependencies (ignoring case), where categories are known.
+      // if (widget.prefilledCategory != null &&
+      //     widget.prefilledCategory!.isNotEmpty) {
+      //   _selectedCategory = widget.prefilledCategory!;
+      // }
 
       if (widget.prefilledNotes != null && widget.prefilledNotes!.isNotEmpty) {
         _noteController.text = widget.prefilledNotes!;
@@ -113,9 +121,24 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       if (!provider.accounts.any((a) => a.id == _selectedAccountId)) {
         _selectedAccountId = null;
       }
+      // A suggested category (MacroDroid's `category`, a detected payment)
+      // is used only if it exists; "food" matches "Food". Otherwise it's
+      // treated as no suggestion.
+      var hasPrefill = false;
+      final wanted = (widget.prefilledCategory ?? '').trim().toLowerCase();
+      if (widget.expense == null && wanted.isNotEmpty) {
+        for (final c in provider.customCategories) {
+          if (c.name.toLowerCase() == wanted &&
+              c.name != ExpenseProvider.savedCategoryName) {
+            _selectedCategory = c.name;
+            hasPrefill = true;
+            break;
+          }
+        }
+      }
       // Same for a remembered category that was deleted since.
       if (widget.expense == null &&
-          widget.prefilledCategory == null &&
+          !hasPrefill &&
           provider.customCategories.isNotEmpty &&
           (_selectedCategory == ExpenseProvider.savedCategoryName ||
               !provider.customCategories
@@ -129,12 +152,36 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         _selectedAccountId = provider.defaultAccount!.id;
       }
 
+      // New expense without a suggested category (manual or MacroDroid):
+      // follow the payee. Runs before an auto-save so that uses it too.
+      if (widget.expense == null && !hasPrefill) {
+        _defaultCategory = _selectedCategory;
+        _applyPayeeCategory(rebuild: false);
+        _titleController.addListener(_applyPayeeCategory);
+      }
+
       if (widget.autoSave) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _saveExpense();
         });
       }
     }
+  }
+
+  /// Picks the payee's last-used category, or goes back to the starting
+  /// category when the payee no longer matches one.
+  void _applyPayeeCategory({bool rebuild = true}) {
+    if (_categoryTouched || _defaultCategory == null || !mounted) return;
+    final name = _titleController.text.trim();
+    final learned = name.isEmpty
+        ? null
+        : context.read<CaptureProvider>().categoryForPayee(name);
+    final next = learned ?? _defaultCategory!;
+    final pickedFor = learned == null ? null : name;
+    if (next == _selectedCategory && pickedFor == _payeePickedFor) return;
+    _selectedCategory = next;
+    _payeePickedFor = pickedFor;
+    if (rebuild) setState(() {});
   }
 
   @override
@@ -192,6 +239,14 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               _buildSectionTitle('CATEGORY'),
               const SizedBox(height: 10),
               _buildCategorySelector(),
+              if (_payeePickedFor != null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, top: 6),
+                  child: Text(
+                    'Last used for $_payeePickedFor',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                  ),
+                ),
               const SizedBox(height: 20),
 
               _buildSectionTitle('DATE & ACCOUNT'),
@@ -304,9 +359,11 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               if (value == null || value.trim().isEmpty) {
                 return 'Please enter an amount';
               }
-              if (double.tryParse(value.trim()) == null) {
+              final amount = double.tryParse(value.trim());
+              if (amount == null || !amount.isFinite) {
                 return 'Please enter a valid amount';
               }
+              if (amount <= 0) return 'Amount must be more than 0';
               return null;
             },
           ),
@@ -383,6 +440,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                   onTap: () {
                     setState(() {
                       _selectedCategory = category.name;
+                      _categoryTouched = true;
+                      _payeePickedFor = null;
                     });
                   },
                   child: Container(
@@ -446,8 +505,14 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         final DateTime? picked = await showDatePicker(
           context: context,
           initialDate: _selectedDate,
-          firstDate: DateTime(2020),
-          lastDate: DateTime.now(),
+          // Widened for an older entry already dated outside the range,
+          // which would otherwise crash the picker.
+          firstDate: _selectedDate.isBefore(DateTime(2020))
+              ? _selectedDate
+              : DateTime(2020),
+          lastDate: _selectedDate.isAfter(DateTime.now())
+              ? _selectedDate
+              : DateTime.now(),
         );
         if (picked != null && picked != _selectedDate) {
           setState(() {
@@ -629,13 +694,20 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           await capture.learnFromEdit(
             expense.transactionId,
             expense.category,
-            payee: expense.payee,
+            // The "Payee" field is stored as the description; `payee`
+            // holds the Purpose text.
+            payee: expense.description,
           );
         }
       } else {
         await provider.addExpense(expense);
         await AppPrefs.instance
             .rememberUsed(expense.category, expense.accountId);
+        // Typed-in expenses teach the payee's category (detected ones
+        // opened with "Edit & add" learn through the capture flow).
+        if (widget.prefilledTransactionId == null) {
+          capture.learnFromManual(title, expense.category);
+        }
       }
 
       if (mounted) {

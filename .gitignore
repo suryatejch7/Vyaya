@@ -137,3 +137,7 @@ local.properties
 android/app/expensify-key.jks
 android/app/key.properties
 android/key.properties
+
+# Parser evaluation: datasets and reports (may contain your own SMS)
+tool/parser_eval/data/
+tool/parser_eval/out/

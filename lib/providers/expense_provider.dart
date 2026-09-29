@@ -829,13 +829,24 @@ class ExpenseProvider extends ChangeNotifier {
     for (var i = 0; i < _recurring.length; i++) {
       var r = _recurring[i];
       if (!r.active) continue;
-      var guard = 0; // catch-up cap (104 weeks / 24 months / 3 years)
-      while (!r.nextDue.isAfter(today) && guard < r.catchUpLimit) {
-        await _createFromRecurring(r, r.nextDue);
-        r = r.copyWith(nextDue: r.nextAfter(r.nextDue));
-        changed = true;
-        guard++;
+      // Catch-up cap (104 weeks / 24 months / 3 years): after a long gap
+      // only the most recent missed ones are added, and the older ones are
+      // skipped for good instead of arriving in batches on later opens.
+      final missed = <DateTime>[];
+      var due = r.nextDue;
+      while (!due.isAfter(today) && missed.length < 5000) {
+        missed.add(due);
+        due = r.nextAfter(due);
       }
+      if (missed.isEmpty) continue;
+      final skip = missed.length > r.catchUpLimit
+          ? missed.length - r.catchUpLimit
+          : 0;
+      for (final d in missed.skip(skip)) {
+        await _createFromRecurring(r.copyWith(nextDue: d), d);
+      }
+      r = r.copyWith(nextDue: due);
+      changed = true;
       _recurring[i] = r;
     }
     if (changed) await _saveRecurring();

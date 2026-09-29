@@ -9,6 +9,7 @@ import '../models/expense_models.dart';
 import '../services/capture/capture_models.dart';
 import '../services/capture/merchant_categorizer.dart';
 import '../services/capture/transaction_parser.dart';
+import '../services/app_prefs.dart';
 import '../services/local_store.dart';
 import 'expense_provider.dart';
 
@@ -239,7 +240,7 @@ class CaptureProvider extends ChangeNotifier {
       merchant: t.merchant,
       rawText: r.body,
       categoryNames: _expenses!.categories.map((c) => c.name).toList(),
-      learned: _rules,
+      learned: _activeRules,
       aliases: _categoryAliases(),
     );
 
@@ -308,8 +309,10 @@ class CaptureProvider extends ChangeNotifier {
 
   /// Same amount + direction, and then:
   /// - both have references -> they must match;
-  /// - different sources (app notification vs bank SMS) -> within 5 min, or
-  ///   within 3 h with the same payee;
+  /// - different sources (app notification vs bank SMS) -> within 5 min;
+  ///   within 30 min when one of them has no payee (e.g. the app only named
+  ///   a QR/VPA handle like "BHARATPE.9Y0I…@unitype"); or within 3 h with
+  ///   the same payee;
   /// - same source -> only within 2 min (re-posted notification / re-read SMS).
   DetectedTransaction? _findSamePayment(
       ParsedTransaction t, String kind, DateTime capturedAt) {
@@ -326,6 +329,11 @@ class CaptureProvider extends ChangeNotifier {
       final gap = i.capturedAt.difference(capturedAt).abs();
       if (i.sourceKind != kind) {
         if (gap <= const Duration(minutes: 5)) return i;
+        // Bank SMS often arrive late; a nameless report can't contradict.
+        if (gap <= const Duration(minutes: 30) &&
+            (i.merchant == null || t.merchant == null)) {
+          return i;
+        }
         if (gap <= const Duration(hours: 3) &&
             _merchantsMatch(i.merchant, t.merchant)) {
           return i;
@@ -399,7 +407,7 @@ class CaptureProvider extends ChangeNotifier {
           merchant: t.merchant,
           rawText: r.body,
           categoryNames: _expenses!.categories.map((c) => c.name).toList(),
-          learned: _rules,
+          learned: _activeRules,
           aliases: _categoryAliases(),
         ),
       );
@@ -589,6 +597,8 @@ class CaptureProvider extends ChangeNotifier {
   /// Keeps detected payments and learned payee rules pointing at a category
   /// after it's renamed.
   Future<void> renameCategory(String from, String to) async {
+    // "Remember last category" follows the rename / move too.
+    await AppPrefs.instance.renameLastCategory(from, to);
     var changed = false;
     for (final i in List.of(_items)) {
       if (i.category == from) {
@@ -782,12 +792,35 @@ class CaptureProvider extends ChangeNotifier {
     }
     merchant ??= payee;
     if (merchant == null || merchant.trim().isEmpty) return;
+    // A nameless detected payment's placeholder title isn't a payee.
+    const placeholders = {'upipayment', 'moneyreceived'};
+    if (placeholders.contains(MerchantCategorizer.key(merchant))) return;
     _learn(merchant, category);
     notifyListeners();
   }
 
+  /// Payee rules, or none when "Remember category per payee" is off.
+  Map<String, String> get _activeRules =>
+      AppPrefs.instance.rememberPayeeCategory ? _rules : const {};
+
+  /// The category last used for [payee], if it still exists (never "Saved",
+  /// which isn't picked by hand). Null when the option is off.
+  String? categoryForPayee(String payee) {
+    final cat = _activeRules[MerchantCategorizer.key(payee)];
+    if (cat == null || cat == ExpenseProvider.savedCategoryName) return null;
+    final exists = _expenses?.categories.any((c) => c.name == cat) ?? false;
+    return exists ? cat : null;
+  }
+
+  /// A new expense added by hand: remember its payee's category.
+  void learnFromManual(String payee, String category) {
+    if (category == ExpenseProvider.savedCategoryName) return;
+    _learn(payee, category);
+  }
+
   void _learn(String? merchant, String category) {
     if (merchant == null) return;
+    if (!AppPrefs.instance.rememberPayeeCategory) return;
     final k = MerchantCategorizer.key(merchant);
     if (k.length < 2) return;
     _rules[k] = category;

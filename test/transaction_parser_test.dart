@@ -209,4 +209,65 @@ void main() {
   test('#171 Airtel recharge', () => _accept('Recharge of ₹199 for Airtel 9876XXXX21 is successful. Txn ID 1234567890', 199.0, true, 'Airtel'));
   test('#172 recharge ad', () => _reject('Recharge now and get Rs 50 cashback. Recharge done in seconds!'));
   test('#173 failed recharge', () => _reject('Recharge failed for Rs 299. Amount will be refunded.'));
+  test('#174 recharge offer (gift cards)', () => _reject('Make your 1st Airtel recharge, get 5% cashback on gift cards — Recharge for ₹379 and get Adobe Express Premium, Apple Music, cashback on select gift cards on Google Pay & many other benefits', source: 'notification'));
+  test('#175 percent cashback offer', () => _reject('Get 10% cashback on your electricity bill with Amazon Pay', source: 'notification'));
+  test('#176 cashback credited still counts', () {
+    final r = TransactionParser.parse('₹5 cashback credited to your Paytm wallet for payment to Swiggy', source: 'notification');
+    expect(r.isOk, isTrue);
+    expect(r.transaction!.isDebit, isFalse);
+    expect(r.transaction!.amount, 5);
+  });
+  test('#177 ICICI debit with payee "credited" is a debit', () {
+    final r = TransactionParser.parse('ICICI Bank Acct XX308 debited for Rs 15.00 on 29-Sep-26; MIRZA QASIM ALI credited. UPI:490467039981. Call 18002662 for dispute. SMS BLOCK 308 to 9215676766.', sender: 'AD-ICICIT');
+    expect(r.isOk, isTrue);
+    expect(r.transaction!.isDebit, isTrue);
+    expect(r.transaction!.amount, 15);
+    expect(r.transaction!.reference, '490467039981');
+  });
+  test('#178 app transfer to a QR handle', () {
+    final r = TransactionParser.parse('Money transfer successful — ₹15 has been sent to BHARATPE.9Y0I0S1S1N634031@unitype', source: 'notification');
+    expect(r.isOk, isTrue);
+    expect(r.transaction!.isDebit, isTrue);
+    expect(r.transaction!.amount, 15);
+  });
+  // Written from the dataset runs (spam/scam sets, bank formats): scams,
+  // offers and reminders stay out; real alerts in odd formats get in.
+  test('#179 obfuscated loan scam', () => _reject('Y0UR L0AN of Rs.56,6OO/- is approved, get it t0day at loanfast.top'));
+  test('#180 free points promo', () => _reject('Your 450 cash points are expiring. Redeem them for FREE gifts at rewardz.in'));
+  test('#181 airtel cashback offer', () => _reject('Recharge with Airtel Thanks app and get Rs 60 cashback. T&C apply'));
+  test('#182 wa.me job scam', () => _reject('Part time job, daily salary Rs 3000. Message wa.me/919812345678'));
+  test('#183 stock tip', () => _reject('BUY TATAPOWER purchase price Rs 412, target price Rs 450, stop loss Rs 398'));
+  test('#184 credited by mistake scam', () => _reject('Rs 5,000 was credited to your account by mistake. Please refund the amount to 9812345678'));
+  test('#185 call a mobile to block', () => _reject('Rs 9,999 debited from your SBI account. If not you, call 9812345678 immediately to block.'));
+  test('#186 bank toll-free is fine', () => _accept('Rs 750 debited from A/c XX1234 at CROMA. Not you? call 18001234567 or 9812345678', 750.0, true, 'Croma'));
+  test('#187 hinglish due reminder', () => _reject('Aapka bijli bill Rs 1,240 kal tak due hai. Abhi pay karein.'));
+  test('#188 future autodebit with nb hyphen', () => _reject('Your EMI of Rs 3,200 will be auto\u2011debited on 5th.'));
+  test('#189 disconnection warning', () => _reject('Rs 870 not paid, connection will be disconnected tomorrow.'));
+  test('#190 refund despite total due', () => _accept('Refund of Rs 499 credited to your card XX4455. Total due is now Rs 2,100.', 499.0, false, null));
+  test('#191 Dr. INR format', () => _accept('Acct XX1122 Dr. INR 70.00 on 13/09/26 to ASHA STORES; UPI 612300001111. Bal INR 3,000.00', 70.0, true, 'Asha Stores'));
+  test('#192 Received! format', () => _accept('Received! INR 2,000.00 in your A/c xx4455 on 03-05-26 via IMPS. Avl bal INR 9,000.00', 2000.0, false, null));
+  test('#193 stuck credited', () => _accept('Rs.1100credited to A/c XX9090 on 04-09-26 by NEFT', 1100.0, false, null));
+  test('#194 payee received from your a/c', () => _accept('Acme Gold Ltd has received Rs 25.00 from your A/c 7788 via NEFT on 10-09-2026', 25.0, true, null));
+  test('#195 balance is debited', () => _accept('Your wallet balance is debited for INR 120.00 at CHAI POINT', 120.0, true, 'Chai Point'));
+  test('#196 e-mandate processed', () => _accept('Payment of INR 149.00 for Netflix via e-mandate on Debit Card 3456 is processed successfully.', 149.0, true, 'Netflix'));
+  test('#197 styled letters', () => _accept('Rs 300 \u{1D5CC}\u{1D5C9}\u{1D5BE}\u{1D5C7}\u{1D5CD} on card XX1234 at ZOMATO', 300.0, true, 'Zomato'));
+  test('#198 FASTag recharge', () => _accept('Your FASTag was recharged successfully with Rs 500. Txn FT12345', 500.0, true, 'FASTag'));
+  test('#199 inform you is not a payee', () => _accept('Hi Ravi, happy to inform you that your loan EMI of Rs.2100 has been auto-debited successfully today.', 2100.0, true, null));
+  test('#200 free ATM txn note is not a promo', () => _accept('A/c XX1234 debited with Rs.2000.00 thru card XX9239. Out of 5 free txn on ATM, you used 1. Bal 9000.00. If not done, fwd SMS to 9264192641', 2000.0, true, null));
+  test('#201 limited in payee name is not a limit', () => _accept('Asha Traders Private Limited has received Rs 40.00 from your A/c 1234 via UPI', 40.0, true, null));
+  test('#202 share OTP scam', () => _reject('Rs 2,300 deducted from your account. To cancel, share your debit card PIN with our executive.'));
+  test('#203 do not share OTP is fine', () => _accept('Rs 640 debited from A/c XX1234 to SWIGGY. Do not share your OTP or PIN with anyone.', 640.0, true, 'Swiggy'));
+  test('#204 hindi due', () => _reject('आपका बिल Rs 999 आज due है'));
+  // A finished payment isn't dated after the message arrived.
+  test('#205 validity date is not the payment date', () {
+    final posted = DateTime(2026, 8, 16, 10);
+    final r = TransactionParser.parse('Recharge of Rs 299 for 98XXXXXX12 successful via PhonePe. Plan valid till 12 Sep 2026.', postedAt: posted);
+    expect(r.isOk, isTrue);
+    expect(r.transaction!.occurredAt, posted);
+  });
+  test('#206 renewal date skipped, payment date kept', () {
+    final r = TransactionParser.parse('Rs 499 paid to Netflix on 14-08-26. Next renewal on 14-09-26.', postedAt: DateTime(2026, 8, 16, 10));
+    expect(r.isOk, isTrue);
+    expect(r.transaction!.occurredAt, DateTime(2026, 8, 14, 12));
+  });
 }

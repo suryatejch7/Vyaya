@@ -2144,6 +2144,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               final navigator = Navigator.of(context);
 
               await LocalStore.resetAllData();
+              // Old backup / CSV copies in the app's storage go too.
+              await BackupService.deleteSavedFiles();
               expenseProvider.clearUserData();
               await userProvider.clearUser();
 
@@ -2211,7 +2213,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-              _groupLabel('MONEY'),
+              // Most useful first, niche ones at the bottom.
+              _groupLabel('ESSENTIALS'),
               _group([
                 _row(
                   icon: Icons.savings_outlined,
@@ -2229,112 +2232,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 _row(
-                  icon: Icons.date_range_rounded,
-                  color: Colors.lightBlue,
-                  title: 'Week starts on',
-                  subtitle: prefs.weekStartsMonday
-                      ? 'Weeks run Monday to Sunday'
-                      : 'Weeks run Sunday to Saturday',
-                  chevron: false,
-                  onTap: () =>
-                      prefs.setWeekStartsMonday(!prefs.weekStartsMonday),
-                  trailing: _pill(prefs.weekStartsMonday ? 'Monday' : 'Sunday'),
-                ),
-              ]),
-
-              _groupLabel('HOME'),
-              _group([
-                _row(
-                  icon: Icons.visibility_off_outlined,
-                  color: Colors.blueGrey,
-                  title: 'Hide totals on Home',
-                  subtitle: 'Mask spent, income and left · tap the amount to peek',
-                  chevron: false,
-                  onTap: () => prefs.setHideHomeTotals(!prefs.hideHomeTotals),
-                  trailing: Switch(
-                    value: prefs.hideHomeTotals,
-                    onChanged: prefs.setHideHomeTotals,
-                  ),
-                ),
-                _row(
-                  icon: Icons.trending_down_rounded,
-                  color: Colors.greenAccent,
-                  title: 'Spending pace on Home',
-                  subtitle: 'Today\'s spend and how much you can spend per day',
-                  chevron: false,
-                  onTap: () =>
-                      prefs.setShowSpendingPace(!prefs.showSpendingPace),
-                  trailing: Switch(
-                    value: prefs.showSpendingPace,
-                    onChanged: prefs.setShowSpendingPace,
-                  ),
-                ),
-                _row(
-                  icon: Icons.swipe_up_rounded,
-                  color: Colors.purpleAccent,
-                  title: 'Quick actions',
-                  subtitle:
-                      'Swipe up on the nav bar · ${prefs.shortcutsInSheet.map(_shortcutName).join(' & ')}',
-                  onTap: _showQuickActionsPicker,
-                ),
-              ]),
-
-              _groupLabel('ADDING ENTRIES'),
-              _group([
-                _row(
-                  icon: Icons.keyboard_outlined,
-                  color: Colors.tealAccent,
-                  title: 'Open keyboard on Add',
-                  subtitle: 'Add Expense / Income starts on the amount',
-                  chevron: false,
-                  onTap: () => prefs.setAutoFocusAmount(!prefs.autoFocusAmount),
-                  trailing: Switch(
-                    value: prefs.autoFocusAmount,
-                    onChanged: prefs.setAutoFocusAmount,
-                  ),
-                ),
-                _row(
-                  icon: Icons.history_rounded,
-                  color: Colors.orange,
-                  title: 'Remember last category',
-                  subtitle: 'Add Expense starts with the category and account you used last',
-                  chevron: false,
-                  onTap: () =>
-                      prefs.setRememberLastUsed(!prefs.rememberLastUsed),
-                  trailing: Switch(
-                    value: prefs.rememberLastUsed,
-                    onChanged: prefs.setRememberLastUsed,
-                  ),
-                ),
-                _row(
-                  icon: Icons.bedtime_outlined,
-                  color: Colors.indigoAccent,
-                  title: 'Late night counts as yesterday',
-                  subtitle: 'Entries added before ${AppPrefs.lateNightCutoffHour} AM are dated the previous day',
+                  icon: Icons.person_pin_outlined,
+                  color: Colors.cyanAccent,
+                  title: 'Remember category per payee',
+                  subtitle: 'Paying someone again picks the category you used for them last time',
                   chevron: false,
                   onTap: () => prefs
-                      .setLateNightIsYesterday(!prefs.lateNightIsYesterday),
+                      .setRememberPayeeCategory(!prefs.rememberPayeeCategory),
                   trailing: Switch(
-                    value: prefs.lateNightIsYesterday,
-                    onChanged: prefs.setLateNightIsYesterday,
+                    value: prefs.rememberPayeeCategory,
+                    onChanged: prefs.setRememberPayeeCategory,
                   ),
                 ),
-              ]),
-
-              _groupLabel('ALERTS & GOALS'),
-              _group([
                 _row(
-                  icon: Icons.flag_outlined,
-                  color: Colors.tealAccent,
-                  title: 'Monthly savings goal',
-                  subtitle: prefs.savingsGoal == null
-                      ? 'Track how much you want left each month'
-                      : '₹${prefs.savingsGoal!.toStringAsFixed(0)} a month · shown in Savings',
-                  onTap: () => _editAmountPref(
-                    title: 'Monthly savings goal',
-                    hint: 'How much you want left at month end',
-                    current: prefs.savingsGoal,
-                    onSave: prefs.setSavingsGoal,
+                  icon: Icons.lock_outline_rounded,
+                  color: Colors.lightBlueAccent,
+                  title: 'App lock',
+                  subtitle: prefs.appLockEnabled
+                      ? 'PIN on opening and after 30 s away · tap to change PIN'
+                      : 'Ask for a PIN when Vyaya opens',
+                  chevron: false,
+                  onTap: prefs.appLockEnabled
+                      ? _changePin
+                      : () => _setAppLock(true),
+                  trailing: Switch(
+                    value: prefs.appLockEnabled,
+                    onChanged: _setAppLock,
+                  ),
+                ),
+                _row(
+                  icon: Icons.event_note_rounded,
+                  color: Colors.amber,
+                  title: 'Bill reminders',
+                  subtitle: 'The day before a recurring expense (rent, subscriptions…)',
+                  chevron: false,
+                  onTap: () => prefs.setBillReminders(!prefs.billReminders),
+                  trailing: Switch(
+                    value: prefs.billReminders,
+                    onChanged: prefs.setBillReminders,
                   ),
                 ),
                 _row(
@@ -2365,33 +2300,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ]),
 
-              _groupLabel('PRIVACY'),
+              _groupLabel('ADDING ENTRIES'),
               _group([
                 _row(
-                  icon: Icons.lock_outline_rounded,
-                  color: Colors.lightBlueAccent,
-                  title: 'App lock',
-                  subtitle: prefs.appLockEnabled
-                      ? 'PIN on opening and after 30 s away · tap to change PIN'
-                      : 'Ask for a PIN when Vyaya opens',
+                  icon: Icons.history_rounded,
+                  color: Colors.orange,
+                  title: 'Remember last category',
+                  subtitle: 'Add Expense starts with the category and account you used last',
                   chevron: false,
-                  onTap: prefs.appLockEnabled
-                      ? _changePin
-                      : () => _setAppLock(true),
+                  onTap: () =>
+                      prefs.setRememberLastUsed(!prefs.rememberLastUsed),
                   trailing: Switch(
-                    value: prefs.appLockEnabled,
-                    onChanged: _setAppLock,
+                    value: prefs.rememberLastUsed,
+                    onChanged: prefs.setRememberLastUsed,
+                  ),
+                ),
+                _row(
+                  icon: Icons.keyboard_outlined,
+                  color: Colors.tealAccent,
+                  title: 'Open keyboard on Add',
+                  subtitle: 'Add Expense / Income starts on the amount',
+                  chevron: false,
+                  onTap: () => prefs.setAutoFocusAmount(!prefs.autoFocusAmount),
+                  trailing: Switch(
+                    value: prefs.autoFocusAmount,
+                    onChanged: prefs.setAutoFocusAmount,
+                  ),
+                ),
+                _row(
+                  icon: Icons.bedtime_outlined,
+                  color: Colors.indigoAccent,
+                  title: 'Late night counts as yesterday',
+                  subtitle: 'Entries added before ${AppPrefs.lateNightCutoffHour} AM are dated the previous day',
+                  chevron: false,
+                  onTap: () => prefs
+                      .setLateNightIsYesterday(!prefs.lateNightIsYesterday),
+                  trailing: Switch(
+                    value: prefs.lateNightIsYesterday,
+                    onChanged: prefs.setLateNightIsYesterday,
                   ),
                 ),
               ]),
 
-              _groupLabel('NOTIFICATIONS & SUMMARIES'),
+              _groupLabel('GOALS & ALERTS'),
+              _group([
+                _row(
+                  icon: Icons.flag_outlined,
+                  color: Colors.tealAccent,
+                  title: 'Monthly savings goal',
+                  subtitle: prefs.savingsGoal == null
+                      ? 'Track how much you want left each month'
+                      : '₹${prefs.savingsGoal!.toStringAsFixed(0)} a month · shown in Savings',
+                  onTap: () => _editAmountPref(
+                    title: 'Monthly savings goal',
+                    hint: 'How much you want left at month end',
+                    current: prefs.savingsGoal,
+                    onSave: prefs.setSavingsGoal,
+                  ),
+                ),
+                _row(
+                  icon: Icons.speed_rounded,
+                  color: Colors.orangeAccent,
+                  title: 'Early warnings',
+                  subtitle: 'Alert at 80% of your income or a category limit, before you go over',
+                  chevron: false,
+                  onTap: () => prefs.setEarlyWarnings(!prefs.earlyWarnings),
+                  trailing: Switch(
+                    value: prefs.earlyWarnings,
+                    onChanged: prefs.setEarlyWarnings,
+                  ),
+                ),
+              ]),
+
+              _groupLabel('SUMMARIES'),
               _group([
                 _row(
                   icon: Icons.calendar_view_week_rounded,
                   color: Colors.lightGreen,
                   title: 'Weekly summary',
-                  subtitle: 'Sundays at 1 PM: last week\'s spending, top category, vs the week before',
+                  subtitle: '${prefs.weekStartsMonday ? 'Mondays' : 'Sundays'} at 1 PM: last week\'s spending, top category, vs the week before',
                   chevron: false,
                   onTap: () => prefs.setWeeklySummary(!prefs.weeklySummary),
                   trailing: Switch(
@@ -2412,30 +2399,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 _row(
-                  icon: Icons.event_note_rounded,
-                  color: Colors.amber,
-                  title: 'Bill reminders',
-                  subtitle: 'The day before a recurring expense (rent, subscriptions…)',
-                  chevron: false,
-                  onTap: () => prefs.setBillReminders(!prefs.billReminders),
-                  trailing: Switch(
-                    value: prefs.billReminders,
-                    onChanged: prefs.setBillReminders,
-                  ),
-                ),
-                _row(
-                  icon: Icons.speed_rounded,
-                  color: Colors.orangeAccent,
-                  title: 'Early warnings',
-                  subtitle: 'Alert at 80% of your income or a category limit, before you go over',
-                  chevron: false,
-                  onTap: () => prefs.setEarlyWarnings(!prefs.earlyWarnings),
-                  trailing: Switch(
-                    value: prefs.earlyWarnings,
-                    onChanged: prefs.setEarlyWarnings,
-                  ),
-                ),
-                _row(
                   icon: Icons.alarm_rounded,
                   color: Colors.orangeAccent,
                   title: 'Daily reminder',
@@ -2450,6 +2413,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     value: reminder != null,
                     onChanged: _setReminder,
                   ),
+                ),
+              ]),
+
+              _groupLabel('HOME'),
+              _group([
+                _row(
+                  icon: Icons.trending_down_rounded,
+                  color: Colors.greenAccent,
+                  title: 'Spending pace on Home',
+                  subtitle: 'Today\'s spend and how much you can spend per day',
+                  chevron: false,
+                  onTap: () =>
+                      prefs.setShowSpendingPace(!prefs.showSpendingPace),
+                  trailing: Switch(
+                    value: prefs.showSpendingPace,
+                    onChanged: prefs.setShowSpendingPace,
+                  ),
+                ),
+                _row(
+                  icon: Icons.swipe_up_rounded,
+                  color: Colors.purpleAccent,
+                  title: 'Quick actions',
+                  subtitle:
+                      'Swipe up on the nav bar · ${prefs.shortcutsInSheet.map(_shortcutName).join(' & ')}',
+                  onTap: _showQuickActionsPicker,
+                ),
+                _row(
+                  icon: Icons.visibility_off_outlined,
+                  color: Colors.blueGrey,
+                  title: 'Hide totals on Home',
+                  subtitle: 'Mask spent, income and left · tap the amount to peek',
+                  chevron: false,
+                  onTap: () => prefs.setHideHomeTotals(!prefs.hideHomeTotals),
+                  trailing: Switch(
+                    value: prefs.hideHomeTotals,
+                    onChanged: prefs.setHideHomeTotals,
+                  ),
+                ),
+              ]),
+
+              _groupLabel('MORE'),
+              _group([
+                _row(
+                  icon: Icons.date_range_rounded,
+                  color: Colors.lightBlue,
+                  title: 'Week starts on',
+                  subtitle: prefs.weekStartsMonday
+                      ? 'Weeks run Monday to Sunday'
+                      : 'Weeks run Sunday to Saturday',
+                  chevron: false,
+                  onTap: () =>
+                      prefs.setWeekStartsMonday(!prefs.weekStartsMonday),
+                  trailing: _pill(prefs.weekStartsMonday ? 'Monday' : 'Sunday'),
                 ),
               ]),
       ],
@@ -2678,7 +2694,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await onSave(null);
       return;
     }
-    final v = double.tryParse(result.trim());
+    // "25,000" is read as 25000.
+    final v = double.tryParse(result.trim().replaceAll(',', ''));
     await onSave(v == null || v <= 0 ? null : v);
   }
 
