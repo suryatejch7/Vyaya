@@ -6,6 +6,7 @@ import '../providers/capture_provider.dart';
 import 'detected_payments_screen.dart';
 import '../models/expense_models.dart';
 import '../services/notification_service.dart';
+import '../services/smart_notifications.dart';
 import '../services/local_store.dart';
 import '../services/export_service.dart';
 import '../services/backup_service.dart';
@@ -14,13 +15,21 @@ import 'recurring_screen.dart';
 import 'lent_borrowed_screen.dart';
 import 'savings_screen.dart';
 import '../services/app_prefs.dart';
-import '../widgets/app_lock.dart';
+// App lock is switched off for now (kept for later).
+// import '../widgets/app_lock.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Settings is a hub page; heavier sections open as their own pages that
 /// reuse the same state class (so dialogs/helpers are shared).
-enum SettingsPage { home, categories, accounts, autoDetect, optionalFeatures }
+enum SettingsPage {
+  home,
+  categories,
+  accounts,
+  autoDetect,
+  optionalFeatures,
+  notifications,
+}
 
 class SettingsScreen extends StatefulWidget {
   final SettingsPage page;
@@ -120,6 +129,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             builder: (context, ep, child) => _buildOptionalFeatures(ep),
           ),
         );
+      case SettingsPage.notifications:
+        return _subPage('Notifications', _buildNotificationsPage());
       case SettingsPage.home:
         return _buildHome();
     }
@@ -348,45 +359,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               _groupLabel('NOTIFICATIONS'),
               _group([
-                FutureBuilder<bool>(
-                  future: NotificationService.areNotificationsEnabled(),
-                  builder: (context, snapshot) {
-                    final on = snapshot.data ?? true;
-                    return _row(
-                      icon: Icons.notifications_rounded,
-                      color: Colors.purpleAccent,
-                      title: 'Spending alerts',
-                      subtitle: 'When spending passes your income or a category limit',
-                      onTap: () async {
-                        await NotificationService.setNotificationsEnabled(!on);
-                        setState(() {});
-                      },
-                      trailing: Switch(
-                        value: on,
-                        onChanged: (value) async {
-                          await NotificationService.setNotificationsEnabled(
-                              value);
-                          setState(() {});
-                        },
-                      ),
-                    );
-                  },
-                ),
                 _row(
-                  icon: Icons.notification_add_outlined,
-                  color: Colors.grey,
-                  title: 'Send test notification',
-                  chevron: false,
-                  onTap: () async {
-                    final messenger = ScaffoldMessenger.of(context);
-                    await NotificationService.checkIncomeExceeded(26000, 25000);
-                    messenger.showSnackBar(const SnackBar(
-                      content: Text('Test notification sent'),
-                      duration: Duration(seconds: 1),
-                    ));
-                  },
+                  icon: Icons.notifications_rounded,
+                  color: Colors.purpleAccent,
+                  title: 'Notifications',
+                  subtitle: _notificationsSummary(),
+                  onTap: () => _open(SettingsPage.notifications),
                 ),
               ]),
+              // The switch and test button below moved into the
+              // Notifications page:
+              // _groupLabel('NOTIFICATIONS'),
+              // _group([
+                // FutureBuilder<bool>(
+                  // future: NotificationService.areNotificationsEnabled(),
+                  // builder: (context, snapshot) {
+                    // final on = snapshot.data ?? true;
+                    // return _row(
+                      // icon: Icons.notifications_rounded,
+                      // color: Colors.purpleAccent,
+                      // title: 'Spending alerts',
+                      // subtitle: 'When spending passes your income or a category limit',
+                      // onTap: () async {
+                        // await NotificationService.setNotificationsEnabled(!on);
+                        // setState(() {});
+                      // },
+                      // trailing: Switch(
+                        // value: on,
+                        // onChanged: (value) async {
+                          // await NotificationService.setNotificationsEnabled(
+                              // value);
+                          // setState(() {});
+                        // },
+                      // ),
+                    // );
+                  // },
+                // ),
+                // _row(
+                  // icon: Icons.notification_add_outlined,
+                  // color: Colors.grey,
+                  // title: 'Send test notification',
+                  // chevron: false,
+                  // onTap: () async {
+                    // final messenger = ScaffoldMessenger.of(context);
+                    // await NotificationService.checkIncomeExceeded(26000, 25000);
+                    // messenger.showSnackBar(const SnackBar(
+                      // content: Text('Test notification sent'),
+                      // duration: Duration(seconds: 1),
+                    // ));
+                  // },
+                // ),
+              // ]),
 
               _groupLabel('PREFERENCES'),
               _group([
@@ -1783,8 +1806,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                                 const SizedBox(height: 2),
-                                Text(
-                                  account.type.label,
+                                // "Default" sits on this line now, so the
+                                // name gets the full width.
+                                Text.rich(
+                                  TextSpan(children: [
+                                    TextSpan(text: account.type.label),
+                                    if (account.isDefault)
+                                      TextSpan(
+                                        text: '  ·  Default',
+                                        style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                  ]),
                                   style: TextStyle(
                                     color: account.isCreditCard
                                         ? Colors.orange.withValues(alpha: 0.8)
@@ -1795,60 +1832,94 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ],
                             ),
                           ),
-                          if (account.isDefault) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                'Default',
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
+                          // if (account.isDefault) ...[
+                          //   const SizedBox(width: 8),
+                          //   Container(
+                          //     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          //     decoration: BoxDecoration(
+                          //       color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
+                          //       borderRadius: BorderRadius.circular(8),
+                          //     ),
+                          //     child: Text(
+                          //       'Default',
+                          //       style: TextStyle(
+                          //         color: Theme.of(context).colorScheme.primary,
+                          //         fontSize: 12,
+                          //         fontWeight: FontWeight.bold,
+                          //       ),
+                          //     ),
+                          //   ),
+                          // ],
                         ],
                       ),
                     ),
-                    Row(
-                      children: [
+                    // One ⋮ menu instead of three icon buttons, so the
+                    // account name has room on small phones.
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert, color: Colors.grey),
+                      color: const Color(0xFF2A2A2A),
+                      onSelected: (v) {
+                        switch (v) {
+                          case 'default':
+                            _setDefaultAccount(account.id);
+                          case 'edit':
+                            _showAddAccountDialog(editing: account);
+                          case 'delete':
+                            _showDeleteAccountDialog(account);
+                        }
+                      },
+                      itemBuilder: (context) => [
                         if (!account.isDefault)
-                          IconButton(
-                            onPressed: () => _setDefaultAccount(account.id),
-                            icon: const Icon(
-                              Icons.star_border,
-                              color: Colors.grey,
-                              size: 20,
-                            ),
-                            tooltip: 'Set as default',
+                          const PopupMenuItem(
+                            value: 'default',
+                            child: Text('Set as default',
+                                style: TextStyle(color: Colors.white)),
                           ),
-                        IconButton(
-                          onPressed: () =>
-                              _showAddAccountDialog(editing: account),
-                          icon: const Icon(
-                            Icons.edit,
-                            color: Colors.grey,
-                            size: 20,
-                          ),
-                          tooltip: 'Edit',
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Text('Edit',
+                              style: TextStyle(color: Colors.white)),
                         ),
-                        IconButton(
-                          onPressed: () => _showDeleteAccountDialog(account),
-                          icon: const Icon(
-                            Icons.delete,
-                            color: Colors.red,
-                            size: 20,
-                          ),
-                          tooltip: 'Delete',
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Delete',
+                              style: TextStyle(color: Colors.redAccent)),
                         ),
                       ],
                     ),
+                    // Row(
+                    //   children: [
+                    //     if (!account.isDefault)
+                    //       IconButton(
+                    //         onPressed: () => _setDefaultAccount(account.id),
+                    //         icon: const Icon(
+                    //           Icons.star_border,
+                    //           color: Colors.grey,
+                    //           size: 20,
+                    //         ),
+                    //         tooltip: 'Set as default',
+                    //       ),
+                    //     IconButton(
+                    //       onPressed: () =>
+                    //           _showAddAccountDialog(editing: account),
+                    //       icon: const Icon(
+                    //         Icons.edit,
+                    //         color: Colors.grey,
+                    //         size: 20,
+                    //       ),
+                    //       tooltip: 'Edit',
+                    //     ),
+                    //     IconButton(
+                    //       onPressed: () => _showDeleteAccountDialog(account),
+                    //       icon: const Icon(
+                    //         Icons.delete,
+                    //         color: Colors.red,
+                    //         size: 20,
+                    //       ),
+                    //       tooltip: 'Delete',
+                    //     ),
+                    //   ],
+                    // ),
                   ],
                 ),
               ),
@@ -2143,6 +2214,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               final captureProvider = context.read<CaptureProvider>();
               final navigator = Navigator.of(context);
 
+              BackupService.cancelPending();
               await LocalStore.resetAllData();
               // Old backup / CSV copies in the app's storage go too.
               await BackupService.deleteSavedFiles();
@@ -2157,6 +2229,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // Optional features were wiped too: cancel the reminder.
               await AppPrefs.instance.reloadAfterDataChange(
                   NotificationService.syncDailyReminder);
+              await NotificationService.syncDetectedNotifier();
 
               if (mounted) {
                 navigator.popUntil((route) => route.isFirst);
@@ -2183,6 +2256,235 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ));
   }
 
+  // ==================== NOTIFICATIONS (page) ====================
+
+  /// "5 of 9 on" style summary for the Settings row.
+  String _notificationsSummary() {
+    final p = AppPrefs.instance;
+    if (!p.notificationsOn) return 'All off';
+    final on = [
+      p.incomeAlerts,
+      p.categoryLimitAlerts,
+      p.earlyWarnings,
+      p.largePaymentAlert != null,
+      p.detectedPaymentNotifications,
+      p.weeklySummary,
+      p.monthlyRecap,
+      p.billReminders,
+      p.reminderMinutes != null,
+    ].where((v) => v).length;
+    return '$on of 9 on · choose which ones you get';
+  }
+
+  Future<void> _toggleNotif(Future<void> Function(bool) set, bool v) async {
+    await set(v);
+    await SmartNotifications.sync(); // re-plan what's scheduled
+  }
+
+  Widget _buildNotificationsPage() {
+    final p = AppPrefs.instance;
+    final all = p.notificationsOn;
+    final reminder = p.reminderMinutes;
+
+    // Rows under the master switch are greyed out while it's off.
+    Widget gated(Widget child) => IgnorePointer(
+          ignoring: !all,
+          child: AnimatedOpacity(
+            opacity: all ? 1 : 0.4,
+            duration: const Duration(milliseconds: 150),
+            child: child,
+          ),
+        );
+
+    Widget toggle({
+      required IconData icon,
+      required Color color,
+      required String title,
+      required String subtitle,
+      required bool value,
+      required Future<void> Function(bool) onChanged,
+    }) =>
+        _row(
+          icon: icon,
+          color: color,
+          title: title,
+          subtitle: subtitle,
+          chevron: false,
+          onTap: () => _toggleNotif(onChanged, !value),
+          trailing: Switch(
+            value: value,
+            onChanged: (v) => _toggleNotif(onChanged, v),
+          ),
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _group([
+          _row(
+            icon: all
+                ? Icons.notifications_active_rounded
+                : Icons.notifications_off_rounded,
+            color: Colors.purpleAccent,
+            title: 'Allow notifications',
+            subtitle: all
+                ? 'Pick below which ones you get'
+                : 'Off · Vyaya sends no notifications at all',
+            chevron: false,
+            onTap: () async {
+              await NotificationService.setNotificationsEnabled(!all);
+              setState(() {});
+            },
+            trailing: Switch(
+              value: all,
+              onChanged: (v) async {
+                await NotificationService.setNotificationsEnabled(v);
+                setState(() {});
+              },
+            ),
+          ),
+          _row(
+            icon: Icons.notification_add_outlined,
+            color: Colors.grey,
+            title: 'Send test notification',
+            subtitle: 'Check that notifications reach you',
+            chevron: false,
+            onTap: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              await NotificationService.checkIncomeExceeded(26000, 25000,
+                  test: true);
+              messenger.showSnackBar(const SnackBar(
+                content: Text('Test notification sent'),
+                duration: Duration(seconds: 1),
+              ));
+            },
+          ),
+        ]),
+
+        _groupLabel('SPENDING ALERTS'),
+        gated(_group([
+          toggle(
+            icon: Icons.account_balance_wallet_outlined,
+            color: Colors.redAccent,
+            title: 'Spent more than your income',
+            subtitle: 'When this month\'s spending passes this month\'s income',
+            value: p.incomeAlerts,
+            onChanged: p.setIncomeAlerts,
+          ),
+          toggle(
+            icon: Icons.pie_chart_outline_rounded,
+            color: Colors.orange,
+            title: 'Category over its limit',
+            subtitle: 'For categories you gave a monthly limit',
+            value: p.categoryLimitAlerts,
+            onChanged: p.setCategoryLimitAlerts,
+          ),
+          toggle(
+            icon: Icons.speed_rounded,
+            color: Colors.orangeAccent,
+            title: 'Early warnings',
+            subtitle: 'At 80% of your income or a category limit, before you go over',
+            value: p.earlyWarnings,
+            onChanged: p.setEarlyWarnings,
+          ),
+          _row(
+            icon: Icons.warning_amber_rounded,
+            color: Colors.deepOrangeAccent,
+            title: 'Large payment alert',
+            subtitle: p.largePaymentAlert == null
+                ? 'A single payment above an amount you pick (your bank may already alert you)'
+                : 'For payments of ₹${p.largePaymentAlert!.toStringAsFixed(0)} or more · tap to change',
+            chevron: false,
+            onTap: () => _editAmountPref(
+              title: 'Large payment alert',
+              hint: 'Notify me for payments of at least',
+              current: p.largePaymentAlert ?? 5000,
+              onSave: p.setLargePaymentAlert,
+            ),
+            trailing: Switch(
+              value: p.largePaymentAlert != null,
+              onChanged: (on) => on
+                  ? _editAmountPref(
+                      title: 'Large payment alert',
+                      hint: 'Notify me for payments of at least',
+                      current: 5000,
+                      onSave: p.setLargePaymentAlert,
+                    )
+                  : p.setLargePaymentAlert(null),
+            ),
+          ),
+        ])),
+
+        _groupLabel('DETECTED PAYMENTS'),
+        gated(_group([
+          toggle(
+            icon: Icons.bolt_rounded,
+            color: Colors.amber,
+            title: 'New payment detected',
+            subtitle: 'When auto-detect picks up a payment while Vyaya is closed',
+            value: p.detectedPaymentNotifications,
+            onChanged: (v) async {
+              await p.setDetectedPaymentNotifications(v);
+              await NotificationService.syncDetectedNotifier();
+            },
+          ),
+        ])),
+
+        _groupLabel('SUMMARIES & REMINDERS'),
+        gated(_group([
+          toggle(
+            icon: Icons.event_note_rounded,
+            color: Colors.amber,
+            title: 'Bill reminders',
+            subtitle: 'The day before a recurring expense (rent, subscriptions…)',
+            value: p.billReminders,
+            onChanged: p.setBillReminders,
+          ),
+          toggle(
+            icon: Icons.calendar_view_week_rounded,
+            color: Colors.lightGreen,
+            title: 'Weekly summary',
+            subtitle: '${p.weekStartsMonday ? 'Mondays' : 'Sundays'} at 1 PM: last week\'s spending, top category, vs the week before',
+            value: p.weeklySummary,
+            onChanged: p.setWeeklySummary,
+          ),
+          toggle(
+            icon: Icons.insights_rounded,
+            color: Colors.purpleAccent,
+            title: 'Monthly recap',
+            subtitle: 'On the 1st at 10 AM: spent, income and what was saved',
+            value: p.monthlyRecap,
+            onChanged: p.setMonthlyRecap,
+          ),
+          _row(
+            icon: Icons.alarm_rounded,
+            color: Colors.orangeAccent,
+            title: 'Daily reminder',
+            subtitle: reminder == null
+                ? 'A nudge to log the day\'s spending (skipped on days you\'ve logged something)'
+                : 'Every day at ${_formatMinutes(reminder)}, unless you\'ve logged something · tap to change',
+            chevron: false,
+            onTap: () => reminder == null
+                ? _setReminder(true)
+                : _pickReminderTime(reminder),
+            trailing: Switch(
+              value: reminder != null,
+              onChanged: _setReminder,
+            ),
+          ),
+          toggle(
+            icon: Icons.notifications_paused_outlined,
+            color: Colors.blueGrey,
+            title: 'Nudge me if I haven\'t opened Vyaya',
+            subtitle: 'A plain weekly / monthly reminder when the summaries couldn\'t be prepared',
+            value: p.inactivityNudges,
+            onChanged: p.setInactivityNudges,
+          ),
+        ])),
+      ],
+    );
+  }
+
   // ==================== OPTIONAL FEATURES (page) ====================
 
   /// "3 on · Month-end savings" style summary for the hub row.
@@ -2191,17 +2493,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final on = [
       p.hideHomeTotals,
       p.showSpendingPace,
-      p.reminderMinutes != null,
+      // p.reminderMinutes != null, // Notifications page now
       p.autoFocusAmount,
       p.rememberLastUsed,
       p.lateNightIsYesterday,
       p.savingsGoal != null,
-      p.largePaymentAlert != null,
-      p.weeklySummary,
-      p.monthlyRecap,
-      p.billReminders,
-      p.earlyWarnings,
-      p.appLockEnabled,
+      // Notifications have their own page now:
+      // p.largePaymentAlert != null,
+      // p.weeklySummary,
+      // p.monthlyRecap,
+      // p.billReminders,
+      // p.earlyWarnings,
+      // p.appLockEnabled, // app lock switched off for now
     ].where((v) => v).length;
     final savings = ep.monthEndSavingsEnabled ? 'Saving leftover' : 'Carrying leftover';
     return '$savings · ${on == 0 ? 'extras off' : '$on extra${on == 1 ? '' : 's'} on'}';
@@ -2209,7 +2512,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildOptionalFeatures(ExpenseProvider expenseProvider) {
     final prefs = AppPrefs.instance;
-    final reminder = prefs.reminderMinutes;
+    // final reminder = prefs.reminderMinutes; // daily reminder moved to Notifications
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2244,64 +2547,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onChanged: prefs.setRememberPayeeCategory,
                   ),
                 ),
-                _row(
-                  icon: Icons.lock_outline_rounded,
-                  color: Colors.lightBlueAccent,
-                  title: 'App lock',
-                  subtitle: prefs.appLockEnabled
-                      ? 'PIN on opening and after 30 s away · tap to change PIN'
-                      : 'Ask for a PIN when Vyaya opens',
-                  chevron: false,
-                  onTap: prefs.appLockEnabled
-                      ? _changePin
-                      : () => _setAppLock(true),
-                  trailing: Switch(
-                    value: prefs.appLockEnabled,
-                    onChanged: _setAppLock,
-                  ),
-                ),
-                _row(
-                  icon: Icons.event_note_rounded,
-                  color: Colors.amber,
-                  title: 'Bill reminders',
-                  subtitle: 'The day before a recurring expense (rent, subscriptions…)',
-                  chevron: false,
-                  onTap: () => prefs.setBillReminders(!prefs.billReminders),
-                  trailing: Switch(
-                    value: prefs.billReminders,
-                    onChanged: prefs.setBillReminders,
-                  ),
-                ),
-                _row(
-                  icon: Icons.warning_amber_rounded,
-                  color: Colors.deepOrangeAccent,
-                  title: 'Large payment alert',
-                  subtitle: prefs.largePaymentAlert == null
-                      ? 'Get notified about big payments (helps spot fraud)'
-                      : 'For payments of ₹${prefs.largePaymentAlert!.toStringAsFixed(0)} or more · tap to change',
-                  chevron: false,
-                  onTap: () => _editAmountPref(
-                    title: 'Large payment alert',
-                    hint: 'Notify me for payments of at least',
-                    current: prefs.largePaymentAlert ?? 5000,
-                    onSave: prefs.setLargePaymentAlert,
-                  ),
-                  trailing: Switch(
-                    value: prefs.largePaymentAlert != null,
-                    onChanged: (on) => on
-                        ? _editAmountPref(
-                            title: 'Large payment alert',
-                            hint: 'Notify me for payments of at least',
-                            current: 5000,
-                            onSave: prefs.setLargePaymentAlert,
-                          )
-                        : prefs.setLargePaymentAlert(null),
-                  ),
-                ),
+                // App lock: switched off for now.
+                // _row(
+                //   icon: Icons.lock_outline_rounded,
+                //   color: Colors.lightBlueAccent,
+                //   title: 'App lock',
+                //   subtitle: prefs.appLockEnabled
+                //       ? 'PIN on opening and after 30 s away · tap to change PIN'
+                //       : 'Ask for a PIN when Vyaya opens',
+                //   chevron: false,
+                //   onTap: prefs.appLockEnabled
+                //       ? _changePin
+                //       : () => _setAppLock(true),
+                //   trailing: Switch(
+                //     value: prefs.appLockEnabled,
+                //     onChanged: _setAppLock,
+                //   ),
+                // ),
+                // Moved to Settings → Notifications:
+                // _row(
+                  // icon: Icons.event_note_rounded,
+                  // color: Colors.amber,
+                  // title: 'Bill reminders',
+                  // subtitle: 'The day before a recurring expense (rent, subscriptions…)',
+                  // chevron: false,
+                  // onTap: () => prefs.setBillReminders(!prefs.billReminders),
+                  // trailing: Switch(
+                    // value: prefs.billReminders,
+                    // onChanged: prefs.setBillReminders,
+                  // ),
+                // ),
+                // Moved to Settings → Notifications:
+                // _row(
+                  // icon: Icons.warning_amber_rounded,
+                  // color: Colors.deepOrangeAccent,
+                  // title: 'Large payment alert',
+                  // subtitle: prefs.largePaymentAlert == null
+                      // ? 'Get notified about big payments (helps spot fraud)'
+                      // : 'For payments of ₹${prefs.largePaymentAlert!.toStringAsFixed(0)} or more · tap to change',
+                  // chevron: false,
+                  // onTap: () => _editAmountPref(
+                    // title: 'Large payment alert',
+                    // hint: 'Notify me for payments of at least',
+                    // current: prefs.largePaymentAlert ?? 5000,
+                    // onSave: prefs.setLargePaymentAlert,
+                  // ),
+                  // trailing: Switch(
+                    // value: prefs.largePaymentAlert != null,
+                    // onChanged: (on) => on
+                        // ? _editAmountPref(
+                            // title: 'Large payment alert',
+                            // hint: 'Notify me for payments of at least',
+                            // current: 5000,
+                            // onSave: prefs.setLargePaymentAlert,
+                          // )
+                        // : prefs.setLargePaymentAlert(null),
+                  // ),
+                // ),
               ]),
 
               _groupLabel('ADDING ENTRIES'),
               _group([
+                _row(
+                  icon: Icons.lightbulb_outline,
+                  color: Colors.amber,
+                  title: 'Suggest new categories',
+                  subtitle: 'e.g. offer to create "Gym" for a Nutrabay payment when you have no category for it',
+                  chevron: false,
+                  onTap: () => prefs
+                      .setSuggestNewCategories(!prefs.suggestNewCategories),
+                  trailing: Switch(
+                    value: prefs.suggestNewCategories,
+                    onChanged: prefs.setSuggestNewCategories,
+                  ),
+                ),
                 _row(
                   icon: Icons.history_rounded,
                   color: Colors.orange,
@@ -2342,7 +2661,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ]),
 
-              _groupLabel('GOALS & ALERTS'),
+              _groupLabel('GOALS'),
               _group([
                 _row(
                   icon: Icons.flag_outlined,
@@ -2358,63 +2677,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onSave: prefs.setSavingsGoal,
                   ),
                 ),
-                _row(
-                  icon: Icons.speed_rounded,
-                  color: Colors.orangeAccent,
-                  title: 'Early warnings',
-                  subtitle: 'Alert at 80% of your income or a category limit, before you go over',
-                  chevron: false,
-                  onTap: () => prefs.setEarlyWarnings(!prefs.earlyWarnings),
-                  trailing: Switch(
-                    value: prefs.earlyWarnings,
-                    onChanged: prefs.setEarlyWarnings,
-                  ),
-                ),
+                // Moved to Settings → Notifications:
+                // _row(
+                  // icon: Icons.speed_rounded,
+                  // color: Colors.orangeAccent,
+                  // title: 'Early warnings',
+                  // subtitle: 'Alert at 80% of your income or a category limit, before you go over',
+                  // chevron: false,
+                  // onTap: () => prefs.setEarlyWarnings(!prefs.earlyWarnings),
+                  // trailing: Switch(
+                    // value: prefs.earlyWarnings,
+                    // onChanged: prefs.setEarlyWarnings,
+                  // ),
+                // ),
               ]),
 
-              _groupLabel('SUMMARIES'),
-              _group([
-                _row(
-                  icon: Icons.calendar_view_week_rounded,
-                  color: Colors.lightGreen,
-                  title: 'Weekly summary',
-                  subtitle: '${prefs.weekStartsMonday ? 'Mondays' : 'Sundays'} at 1 PM: last week\'s spending, top category, vs the week before',
-                  chevron: false,
-                  onTap: () => prefs.setWeeklySummary(!prefs.weeklySummary),
-                  trailing: Switch(
-                    value: prefs.weeklySummary,
-                    onChanged: prefs.setWeeklySummary,
-                  ),
-                ),
-                _row(
-                  icon: Icons.insights_rounded,
-                  color: Colors.purpleAccent,
-                  title: 'Monthly recap',
-                  subtitle: 'On the 1st at 10 AM: spent, income and what was saved',
-                  chevron: false,
-                  onTap: () => prefs.setMonthlyRecap(!prefs.monthlyRecap),
-                  trailing: Switch(
-                    value: prefs.monthlyRecap,
-                    onChanged: prefs.setMonthlyRecap,
-                  ),
-                ),
-                _row(
-                  icon: Icons.alarm_rounded,
-                  color: Colors.orangeAccent,
-                  title: 'Daily reminder',
-                  subtitle: reminder == null
-                      ? 'A nudge to log the day\'s spending'
-                      : 'Every day at ${_formatMinutes(reminder)} · tap to change',
-                  chevron: false,
-                  onTap: () => reminder == null
-                      ? _setReminder(true)
-                      : _pickReminderTime(reminder),
-                  trailing: Switch(
-                    value: reminder != null,
-                    onChanged: _setReminder,
-                  ),
-                ),
-              ]),
+              // Summaries moved to Settings → Notifications.
+              // _groupLabel('SUMMARIES'),
+              // _group([
+                // // Moved to Settings → Notifications:
+                // // _row(
+                  // // icon: Icons.calendar_view_week_rounded,
+                  // // color: Colors.lightGreen,
+                  // // title: 'Weekly summary',
+                  // // subtitle: '${prefs.weekStartsMonday ? 'Mondays' : 'Sundays'} at 1 PM: last week\'s spending, top category, vs the week before',
+                  // // chevron: false,
+                  // // onTap: () => prefs.setWeeklySummary(!prefs.weeklySummary),
+                  // // trailing: Switch(
+                    // // value: prefs.weeklySummary,
+                    // // onChanged: prefs.setWeeklySummary,
+                  // // ),
+                // // ),
+                // // Moved to Settings → Notifications:
+                // // _row(
+                  // // icon: Icons.insights_rounded,
+                  // // color: Colors.purpleAccent,
+                  // // title: 'Monthly recap',
+                  // // subtitle: 'On the 1st at 10 AM: spent, income and what was saved',
+                  // // chevron: false,
+                  // // onTap: () => prefs.setMonthlyRecap(!prefs.monthlyRecap),
+                  // // trailing: Switch(
+                    // // value: prefs.monthlyRecap,
+                    // // onChanged: prefs.setMonthlyRecap,
+                  // // ),
+                // // ),
+                // // Moved to Settings → Notifications:
+                // // _row(
+                  // // icon: Icons.alarm_rounded,
+                  // // color: Colors.orangeAccent,
+                  // // title: 'Daily reminder',
+                  // // subtitle: reminder == null
+                      // // ? 'A nudge to log the day\'s spending'
+                      // // : 'Every day at ${_formatMinutes(reminder)} · tap to change',
+                  // // chevron: false,
+                  // // onTap: () => reminder == null
+                      // // ? _setReminder(true)
+                      // // : _pickReminderTime(reminder),
+                  // // trailing: Switch(
+                    // // value: reminder != null,
+                    // // onChanged: _setReminder,
+                  // // ),
+                // // ),
+              // ]),
 
               _groupLabel('HOME'),
               _group([
@@ -2455,6 +2779,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               _groupLabel('MORE'),
               _group([
+                _row(
+                  icon: Icons.smart_toy_outlined,
+                  color: Colors.blueGrey,
+                  title: 'Automation apps can save directly',
+                  subtitle: 'MacroDroid / Tasker "auto=true" adds the expense without asking. Off: the screen opens for you to confirm (any app can send these)',
+                  chevron: false,
+                  onTap: () => prefs.setAllowAutomationAutoSave(
+                      !prefs.allowAutomationAutoSave),
+                  trailing: Switch(
+                    value: prefs.allowAutomationAutoSave,
+                    onChanged: prefs.setAllowAutomationAutoSave,
+                  ),
+                ),
                 _row(
                   icon: Icons.date_range_rounded,
                   color: Colors.lightBlue,
@@ -2621,35 +2958,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// App lock switch: on runs the PIN setup; off asks for the PIN first.
-  Future<void> _setAppLock(bool on) async {
-    final navigator = Navigator.of(context);
-    if (on) {
-      await navigator.push<bool>(MaterialPageRoute(
-          builder: (context) => const AppLockSetupScreen()));
-      return;
-    }
-    final ok = await _confirmPin();
-    if (ok) await AppLock.disable();
-  }
+  // /// App lock switch: on runs the PIN setup; off asks for the PIN first.
+  // Future<void> _setAppLock(bool on) async {
+  //   final navigator = Navigator.of(context);
+  //   if (on) {
+  //     await navigator.push<bool>(MaterialPageRoute(
+  //         builder: (context) => const AppLockSetupScreen()));
+  //     return;
+  //   }
+  //   final ok = await _confirmPin();
+  //   if (ok) await AppLock.disable();
+  // }
 
-  Future<void> _changePin() async {
-    if (!await _confirmPin() || !mounted) return;
-    await Navigator.of(context).push<bool>(
-        MaterialPageRoute(builder: (context) => const AppLockSetupScreen()));
-  }
+  // Future<void> _changePin() async {
+  //   if (!await _confirmPin() || !mounted) return;
+  //   await Navigator.of(context).push<bool>(
+  //       MaterialPageRoute(builder: (context) => const AppLockSetupScreen()));
+  // }
 
-  /// Full-screen PIN check; true if the right PIN was entered.
-  Future<bool> _confirmPin() async {
-    final ok = await Navigator.of(context).push<bool>(MaterialPageRoute(
-      builder: (ctx) => PinScreen(
-        mode: PinMode.verify,
-        onCancel: () => Navigator.pop(ctx, false),
-        onDone: (_) => Navigator.pop(ctx, true),
-      ),
-    ));
-    return ok == true;
-  }
+  // /// Full-screen PIN check; true if the right PIN was entered.
+  // Future<bool> _confirmPin() async {
+  //   final ok = await Navigator.of(context).push<bool>(MaterialPageRoute(
+  //     builder: (ctx) => PinScreen(
+  //       mode: PinMode.verify,
+  //       onCancel: () => Navigator.pop(ctx, false),
+  //       onDone: (_) => Navigator.pop(ctx, true),
+  //     ),
+  //   ));
+  //   return ok == true;
+  // }
 
   /// Small dialog to set (or clear) an amount-based optional feature.
   Future<void> _editAmountPref({

@@ -52,7 +52,12 @@ class _CategorySummaryState extends State<CategorySummary> {
             const SizedBox(height: 16),
             SizedBox(
               height: 120,
-              child: ListView.builder(
+              // Fixed-size tiles: text grows up to 1.3x here (the rest of
+              // the app still follows the phone's font size), so very large
+              // font settings don't push it out of the tile.
+              child: MediaQuery.withClampedTextScaling(
+                maxScaleFactor: 1.3,
+                child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 itemCount: categoryTotals.length,
                 itemBuilder: (context, index) {
@@ -170,6 +175,7 @@ class _CategorySummaryState extends State<CategorySummary> {
                     ),
                   );
                 },
+              ),
               ),
             ),
           ],

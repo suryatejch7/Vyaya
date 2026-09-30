@@ -45,7 +45,10 @@ object CaptureNotifier {
         }
 
         val title = if (count == 1) "New payment detected" else "$count new payments detected"
-        val text = preview?.take(140)
+        // The raw message (amounts, account digits) isn't shown any more:
+        // this notification also appears on the lock screen.
+        // val text = preview?.take(140)
+        val text = "Open Vyaya to review"
 
         @Suppress("DEPRECATION")
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)

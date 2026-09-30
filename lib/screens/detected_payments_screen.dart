@@ -6,6 +6,7 @@ import '../models/expense_models.dart';
 import '../providers/capture_provider.dart';
 import '../providers/expense_provider.dart';
 import '../services/capture/capture_models.dart';
+import '../services/capture/merchant_categorizer.dart';
 import 'add_expense_screen.dart';
 import '../widgets/undo_snackbar.dart';
 
@@ -250,6 +251,127 @@ class _DetectedPaymentsScreenState extends State<DetectedPaymentsScreen> {
         final allShownSelected =
             pending.isNotEmpty && pending.every((i) => _selected.contains(i.id));
 
+        // Everything above the cards, then the cards, then the history links.
+        final top = <Widget>[
+                  if (!cap.isEnabled)
+                    const _InfoCard(
+                      icon: Icons.info_outline,
+                      text:
+                          'Auto-detection is off. Turn it on in Settings → Auto-detect Payments.',
+                    ),
+                  if (allPending.isNotEmpty)
+                    _FilterBar(filter: _filter, onChanged: _setFilter),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _SectionHeader(
+                          filtered ? 'Showing' : 'To review',
+                          pending.length,
+                          of: filtered ? allPending.length : null,
+                        ),
+                      ),
+                      if (pending.length > 1 && !_selecting) ...[
+                        TextButton(
+                          onPressed: () =>
+                              _dismissMany(cap, pending.map((i) => i.id)),
+                          style: TextButton.styleFrom(
+                              foregroundColor: Colors.grey,
+                              visualDensity: VisualDensity.compact),
+                          child:
+                              Text(filtered ? 'Dismiss shown' : 'Dismiss all'),
+                        ),
+                        TextButton(
+                          onPressed: () => _addMany(
+                              cap, pending.map((i) => i.id),
+                              skipFlagged: true),
+                          style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact),
+                          child: Text(filtered ? 'Add shown' : 'Add all'),
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (pending.length > 1 && !_selecting && !filtered)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        'Swipe right to add, left to dismiss. Long-press to select several.',
+                        style: TextStyle(color: Colors.grey, fontSize: 12),
+                      ),
+                    ),
+                  if (allPending.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 28),
+                      child: Center(
+                        child: Text(
+                          'All caught up. New payments will show up here.',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ),
+                    )
+                  else if (pending.isEmpty)
+                    _NoMatches(onClear: () {
+                      _search.clear();
+                      _setFilter(const _Filter());
+                    })
+        ];
+        final shownRows = pending.isEmpty ? const <Widget>[] : rows;
+        // Lets a card keep its state (open message…) when cards above it
+        // come and go.
+        final rowIndex = <Key, int>{
+          for (var j = 0; j < shownRows.length; j++)
+            if (shownRows[j].key != null) shownRows[j].key!: j,
+        };
+        final bottom = <Widget>[
+                  if (duplicates.isNotEmpty ||
+                      added.isNotEmpty ||
+                      dismissed.isNotEmpty ||
+                      cap.muteRules.isNotEmpty)
+                    const SizedBox(height: 12),
+                  if (duplicates.isNotEmpty)
+                    _HistoryLink(
+                      icon: Icons.content_copy_rounded,
+                      title: 'Possibly already logged',
+                      count: duplicates.length,
+                      subtitle: 'Matched something you added yourself',
+                      kind: _History.duplicates,
+                    ),
+                  if (added.isNotEmpty)
+                    _HistoryLink(
+                      icon: Icons.check_circle_outline_rounded,
+                      title: 'Added from detection',
+                      count: added.length,
+                      subtitle: 'What went into your expenses and income',
+                      kind: _History.added,
+                    ),
+                  if (dismissed.isNotEmpty)
+                    _HistoryLink(
+                      icon: Icons.remove_circle_outline_rounded,
+                      title: 'Dismissed',
+                      count: dismissed.length,
+                      subtitle: 'Restore any you dismissed by mistake',
+                      kind: _History.dismissed,
+                    ),
+                  if (cap.muteRules.isNotEmpty)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.notifications_off_outlined,
+                          color: Colors.grey),
+                      title: Text('Ignored (${cap.muteRules.length})',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600)),
+                      subtitle: const Text(
+                          'Payees and senders that never show up here',
+                          style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      trailing:
+                          const Icon(Icons.chevron_right, color: Colors.grey),
+                      onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const MuteRulesScreen())),
+                    ),
+        ];
+
         final PreferredSizeWidget appBar = _selecting
             ? AppBar(
                 backgroundColor: const Color(0xFF0D0D0D),
@@ -332,122 +454,23 @@ class _DetectedPaymentsScreenState extends State<DetectedPaymentsScreen> {
             appBar: appBar,
             body: RefreshIndicator(
               onRefresh: cap.sync,
-              child: ListView(
+              // Built lazily: only the cards on screen are built, so a
+              // long list of payments to review scrolls smoothly.
+              child: ListView.builder(
                 controller: _scroll,
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                children: [
-                  if (!cap.isEnabled)
-                    const _InfoCard(
-                      icon: Icons.info_outline,
-                      text:
-                          'Auto-detection is off. Turn it on in Settings → Auto-detect Payments.',
-                    ),
-                  if (allPending.isNotEmpty)
-                    _FilterBar(filter: _filter, onChanged: _setFilter),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _SectionHeader(
-                          filtered ? 'Showing' : 'To review',
-                          pending.length,
-                          of: filtered ? allPending.length : null,
-                        ),
-                      ),
-                      if (pending.length > 1 && !_selecting) ...[
-                        TextButton(
-                          onPressed: () =>
-                              _dismissMany(cap, pending.map((i) => i.id)),
-                          style: TextButton.styleFrom(
-                              foregroundColor: Colors.grey,
-                              visualDensity: VisualDensity.compact),
-                          child:
-                              Text(filtered ? 'Dismiss shown' : 'Dismiss all'),
-                        ),
-                        TextButton(
-                          onPressed: () => _addMany(
-                              cap, pending.map((i) => i.id),
-                              skipFlagged: true),
-                          style: TextButton.styleFrom(
-                              visualDensity: VisualDensity.compact),
-                          child: Text(filtered ? 'Add shown' : 'Add all'),
-                        ),
-                      ],
-                    ],
-                  ),
-                  if (pending.length > 1 && !_selecting && !filtered)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 6),
-                      child: Text(
-                        'Swipe right to add, left to dismiss. Long-press to select several.',
-                        style: TextStyle(color: Colors.grey, fontSize: 12),
-                      ),
-                    ),
-                  if (allPending.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 28),
-                      child: Center(
-                        child: Text(
-                          'All caught up. New payments will show up here.',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ),
-                    )
-                  else if (pending.isEmpty)
-                    _NoMatches(onClear: () {
-                      _search.clear();
-                      _setFilter(const _Filter());
-                    })
-                  else
-                    ...rows,
-                  if (duplicates.isNotEmpty ||
-                      added.isNotEmpty ||
-                      dismissed.isNotEmpty ||
-                      cap.muteRules.isNotEmpty)
-                    const SizedBox(height: 12),
-                  if (duplicates.isNotEmpty)
-                    _HistoryLink(
-                      icon: Icons.content_copy_rounded,
-                      title: 'Possibly already logged',
-                      count: duplicates.length,
-                      subtitle: 'Matched something you added yourself',
-                      kind: _History.duplicates,
-                    ),
-                  if (added.isNotEmpty)
-                    _HistoryLink(
-                      icon: Icons.check_circle_outline_rounded,
-                      title: 'Added from detection',
-                      count: added.length,
-                      subtitle: 'What went into your expenses and income',
-                      kind: _History.added,
-                    ),
-                  if (dismissed.isNotEmpty)
-                    _HistoryLink(
-                      icon: Icons.remove_circle_outline_rounded,
-                      title: 'Dismissed',
-                      count: dismissed.length,
-                      subtitle: 'Restore any you dismissed by mistake',
-                      kind: _History.dismissed,
-                    ),
-                  if (cap.muteRules.isNotEmpty)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.notifications_off_outlined,
-                          color: Colors.grey),
-                      title: Text('Ignored (${cap.muteRules.length})',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600)),
-                      subtitle: const Text(
-                          'Payees and senders that never show up here',
-                          style: TextStyle(color: Colors.grey, fontSize: 12)),
-                      trailing:
-                          const Icon(Icons.chevron_right, color: Colors.grey),
-                      onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                              builder: (_) => const MuteRulesScreen())),
-                    ),
-                ],
+                itemCount: top.length + shownRows.length + bottom.length,
+                findChildIndexCallback: (key) {
+                  final j = rowIndex[key];
+                  return j == null ? null : top.length + j;
+                },
+                itemBuilder: (context, i) {
+                  if (i < top.length) return top[i];
+                  i -= top.length;
+                  if (i < shownRows.length) return shownRows[i];
+                  return bottom[i - shownRows.length];
+                },
               ),
             ),
           ),
@@ -885,11 +908,15 @@ String _when(DateTime d) {
   final today = DateTime(now.year, now.month, now.day);
   final day = DateTime(d.year, d.month, d.day);
   final diff = today.difference(day).inDays;
-  final time = DateFormat('h:mm a').format(d);
+  final time = _timeFormat.format(d);
   if (diff == 0) return 'Today, $time';
   if (diff == 1) return 'Yesterday, $time';
-  return DateFormat('d MMM, h:mm a').format(d);
+  return _dayTimeFormat.format(d);
 }
+
+// Made once, not for every card on every rebuild.
+final _timeFormat = DateFormat('h:mm a');
+final _dayTimeFormat = DateFormat('d MMM, h:mm a');
 
 class _SectionHeader extends StatelessWidget {
   final String title;
@@ -1000,7 +1027,9 @@ class _DetectedCardState extends State<_DetectedCard> {
           shrinkWrap: true,
           padding: const EdgeInsets.symmetric(vertical: 12),
           children: [
-            for (final c in ep.categories)
+            // "Saved" holds month-end savings; it isn't picked by hand.
+            for (final c in ep.categories.where(
+                (c) => c.name != ExpenseProvider.savedCategoryName))
               ListTile(
                 leading: Text(c.icon, style: const TextStyle(fontSize: 22)),
                 title: Text(c.name, style: const TextStyle(color: Colors.white)),
@@ -1015,6 +1044,91 @@ class _DetectedCardState extends State<_DetectedCard> {
     );
     if (picked != null) await cap.setCategory(widget.item.id, picked);
   }
+
+  /// "Create Gym": makes the suggested category and moves this payment
+  /// (and others like it) into it.
+  Future<void> _createSuggested(CategoryGroup group) async {
+    final cap = context.read<CaptureProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final name = await cap.createCategoryForGroup(group);
+    messenger.showSnackBar(SnackBar(
+      content: Text('"$name" category created'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  Future<void> _dismissSuggestion(CategoryGroup group) async {
+    final cap = context.read<CaptureProvider>();
+    final stop = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF2A2A2A),
+        title: Text('Stop suggesting ${group.name}?',
+            style: const TextStyle(color: Colors.white)),
+        content: const Text(
+          'Payments like this will stay in Other, or whatever you pick. '
+          'You can turn suggestions back on in Optional features.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Stop suggesting')),
+        ],
+      ),
+    );
+    if (stop == true) await cap.dismissGroup(group);
+  }
+
+  /// "Looks like Gym  [Create Gym] [Pick…] ✕" under the category chip.
+  Widget _suggestionRow(CategoryGroup group) => Container(
+        margin: const EdgeInsets.only(top: 4, bottom: 4),
+        padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
+        decoration: BoxDecoration(
+          color: Colors.amber.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.lightbulb_outline,
+                    size: 16, color: Colors.amber),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Looks like ${group.icon} ${group.name}. You have no category for it yet.',
+                    style: const TextStyle(fontSize: 12, color: Colors.white70),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Stop suggesting',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close, size: 16, color: Colors.grey),
+                  onPressed: () => _dismissSuggestion(group),
+                ),
+              ],
+            ),
+            Wrap(
+              spacing: 4,
+              children: [
+                TextButton(
+                  onPressed: () => _createSuggested(group),
+                  child: Text('Create ${group.name}'),
+                ),
+                TextButton(
+                  onPressed: _pickCategory,
+                  child: const Text('Pick…'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
 
   Future<void> _editAndAdd() async {
     final cap = context.read<CaptureProvider>();
@@ -1046,11 +1160,18 @@ class _DetectedCardState extends State<_DetectedCard> {
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
-    final ep = context.watch<ExpenseProvider>();
+    // Rebuild only when what a card shows changes (categories or currency),
+    // not on every expense added elsewhere.
+    context.select<ExpenseProvider, int>((p) => Object.hash(
+        p.currency,
+        Object.hashAll(
+            p.categories.map((c) => Object.hash(c.name, c.icon, c.color)))));
+    final ep = context.read<ExpenseProvider>();
     final cap = context.read<CaptureProvider>();
     final currency = ep.currency;
     final category = _category(ep.categories, item.category);
     final color = item.isDebit ? category.color : Colors.green;
+    final suggestion = cap.newCategoryHint(item);
     final notes = <String>[
       for (final f in item.flags)
         if (_flagText.containsKey(f)) _flagText[f]!,
@@ -1203,6 +1324,7 @@ class _DetectedCardState extends State<_DetectedCard> {
                     ),
                 ],
               ),
+              if (suggestion != null) _suggestionRow(suggestion),
               if (_showRaw)
                 Container(
                   width: double.infinity,

@@ -27,7 +27,7 @@ It's built around a simple idea: **you log the money that comes in, you log the 
 ### Things that happen on their own
 - **Recurring entries:** set up things that repeat every month once, like pocket money on the 1st or Spotify on the 5th, and Vyaya logs them automatically when their day comes. You can pause, edit or delete them anytime. If you don't open the app for a while, it catches up with anything you missed.
 - **Month-end savings:** when a month ends with money left over, that leftover is logged into a **"Saved"** category on the last day of the month. The category is created for you if it doesn't exist. Over time, this shows you how much you've actually saved each month.
-- **Notifications:** you get a heads-up when your spending passes your income for the month, or when a category goes over the limit you set for it. They can be turned off in Settings.
+- **Notifications:** choose exactly which ones you get in **Settings → Notifications**: spending more than your income, a category going over its limit, early warnings at 80%, large payments, "new payment detected", bill reminders, a weekly summary, a monthly recap and a daily reminder (skipped on days you've already logged something). One switch turns them all off, and there's a test button.
 
 ### Money with friends
 - **Lent & Borrowed:** keep track of "I paid for dinner, Rahul owes me ₹300" or "Borrowed ₹500 from Priya". You see a running balance per person, "You'll get" and "You owe" totals, and you tick entries off as they're settled. None of it counts towards your spending.
@@ -118,7 +118,7 @@ Vyaya accepts an Android intent, so automation apps can log expenses for you:
 
 - **Action:** `com.vyaya.ADD_EXPENSE`
 - **Extras:** `amount`, `payee` (or `title`), `category`, `notes`, and `auto`
-- By default, the add-expense screen opens pre-filled for you to confirm. With `auto=true` it saves straight away.
+- By default, the add-expense screen opens pre-filled for you to confirm. With `auto=true` it saves straight away, but only after you turn on **Settings → Optional features → Automation apps can save directly** (any installed app can send this intent, so it's off by default). Expenses added this way don't change the remembered category for a payee.
 
 For example, a MacroDroid macro that triggers on a UPI "Paid ₹…" notification can pull out the amount and send it straight to Vyaya.
 

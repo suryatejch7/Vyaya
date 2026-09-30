@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/expense_models.dart';
@@ -305,13 +306,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       title: 'Spending Trend',
       child: SizedBox(
         height: 180,
-        child: CustomPaint(
-          painter: SpendingTrendPainter(
-            expenses: expenses,
-            period: _selectedPeriod,
-            labels: labels,
+        // Own layer: scrolling the page doesn't redraw the chart.
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: SpendingTrendPainter(
+              expenses: expenses,
+              period: _selectedPeriod,
+              labels: labels,
+            ),
+            size: const Size.fromHeight(180),
           ),
-          size: const Size.fromHeight(180),
         ),
       ),
     );
@@ -381,12 +385,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         children: [
           SizedBox(
             height: 200,
-            child: CustomPaint(
-              painter: _CategoryPieChartPainter(
-                categoryTotals: Map.fromEntries(sortedEntries),
-                colors: categoryColors,
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: _CategoryPieChartPainter(
+                  categoryTotals: Map.fromEntries(sortedEntries),
+                  colors: categoryColors,
+                ),
+                size: const Size.fromHeight(200),
               ),
-              size: const Size.fromHeight(200),
             ),
           ),
           const SizedBox(height: 16),
@@ -796,14 +802,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       title: title,
       child: SizedBox(
         height: 160,
-        child: CustomPaint(
-          painter: ComparisonBarPainter(
-            expenses: _getFilteredExpenses(provider),
-            period: _selectedPeriod,
-            labels: labels,
-            currency: provider.currency,
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: ComparisonBarPainter(
+              expenses: _getFilteredExpenses(provider),
+              period: _selectedPeriod,
+              labels: labels,
+              currency: provider.currency,
+            ),
+            size: const Size.fromHeight(160),
           ),
-          size: const Size.fromHeight(160),
         ),
       ),
     );
@@ -1041,7 +1049,7 @@ class SpendingTrendPainter extends CustomPainter {
     final chartWidth = size.width - leftPadding - rightPadding;
     final chartHeight = size.height - labelHeight - 10;
 
-    final dataPoints = _getDataValues();
+    final dataPoints = _values;
     if (dataPoints.isEmpty) return;
 
     final maxValue = dataPoints.reduce(math.max);
@@ -1166,6 +1174,9 @@ class SpendingTrendPainter extends CustomPainter {
     }
   }
 
+  /// Totals per bar/point, worked out once (not on every repaint).
+  late final List<double> _values = _getDataValues();
+
   List<double> _getDataValues() {
     final now = DateTime.now();
     final dataPoints = <double>[];
@@ -1236,7 +1247,11 @@ class SpendingTrendPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant SpendingTrendPainter oldDelegate) {
-    return oldDelegate.expenses != expenses || oldDelegate.period != period;
+    // A rebuild passes a new list even when nothing changed; compare the
+    // numbers actually drawn.
+    return oldDelegate.period != period ||
+        !listEquals(oldDelegate.labels, labels) ||
+        !listEquals(oldDelegate._values, _values);
   }
 }
 
@@ -1311,7 +1326,8 @@ class _CategoryPieChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _CategoryPieChartPainter oldDelegate) {
-    return oldDelegate.categoryTotals != categoryTotals;
+    return !mapEquals(oldDelegate.categoryTotals, categoryTotals) ||
+        !listEquals(oldDelegate.colors, colors);
   }
 }
 
@@ -1328,12 +1344,10 @@ class ComparisonBarPainter extends CustomPainter {
     required this.currency,
   });
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    const labelHeight = 22.0;
-    const topPadding = 20.0;
-    final chartHeight = size.height - labelHeight - topPadding;
+  /// Totals per bar, worked out once (not on every repaint).
+  late final List<double> _values = _computeValues();
 
+  List<double> _computeValues() {
     final now = DateTime.now();
     final data = <double>[];
 
@@ -1389,7 +1403,17 @@ class ComparisonBarPainter extends CustomPainter {
           data.add(monthExpenses.fold(0.0, (sum, expense) => sum + expense.amount));
         }
     }
+    return data;
+  }
 
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const labelHeight = 22.0;
+    const topPadding = 20.0;
+    final chartHeight = size.height - labelHeight - topPadding;
+
+    final data = _values;
     if (data.isEmpty) return;
 
     final maxValue = data.reduce(math.max);
@@ -1479,6 +1503,9 @@ class ComparisonBarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant ComparisonBarPainter oldDelegate) {
-    return oldDelegate.expenses != expenses || oldDelegate.period != period;
+    return oldDelegate.period != period ||
+        oldDelegate.currency != currency ||
+        !listEquals(oldDelegate.labels, labels) ||
+        !listEquals(oldDelegate._values, _values);
   }
 }

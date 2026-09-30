@@ -213,6 +213,8 @@ class _GlassNavBarState extends State<GlassNavBar>
   }
 
   void _handleHorizontalSwipe(DragEndDetails details) {
+    // While selecting, the bar is Cancel / Delete: no tab switching.
+    if (widget.isSelectionMode) return;
     const double swipeThreshold = 100.0;
 
     if (details.primaryVelocity!.abs() > swipeThreshold) {
@@ -245,7 +247,10 @@ class _GlassNavBarState extends State<GlassNavBar>
       bottom: 30,
       left: 16,
       right: 0,
-      child: ValueListenableBuilder<UndoRequest?>(
+      // Fixed-size bar: labels grow up to 1.3x with the phone's font size.
+      child: MediaQuery.withClampedTextScaling(
+        maxScaleFactor: 1.3,
+        child: ValueListenableBuilder<UndoRequest?>(
         valueListenable: UndoController.current,
         // Undo pill takes this spot for 5 s; fade the nav bar out meanwhile.
         builder: (context, undo, child) => AnimatedOpacity(
@@ -390,6 +395,7 @@ class _GlassNavBarState extends State<GlassNavBar>
             );
           },
         ),
+      ),
       ),
       ),
     );

@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -10,6 +12,9 @@ import '../providers/user_provider.dart';
 import '../providers/capture_provider.dart';
 import '../models/expense_models.dart';
 import '../models/user_settings.dart';
+import '../models/recurring_entry.dart';
+import '../models/debt_entry.dart';
+import 'capture/capture_models.dart';
 import 'local_store.dart';
 import 'app_prefs.dart';
 import 'notification_service.dart';
@@ -32,13 +37,44 @@ class BackupService {
   /// The app-lock PIN stays on this phone: it isn't put in shared backups
   /// and a restore never replaces it.
   static const String _pinKey = 'ls_opt_pin_hash';
+  static const String _intentAutoSaveKey = 'ls_opt_intent_autosave';
 
   // -------------------- AUTO FILE BACKUP --------------------
 
-  /// Writes a snapshot of all `ls_*` keys to the internal documents directory.
-  /// Called automatically after every data-mutating operation.
-  static Future<void> autoSave() async {
+  static Timer? _autoSaveTimer;
+  static bool _autoSaving = false;
+  static bool _autoSaveAgain = false;
+
+  /// Asks for a fresh safety copy. Changes are grouped: the copy is written
+  /// 3 s after the last change, one at a time, off the UI thread.
+  static void autoSave() {
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = Timer(const Duration(seconds: 3), writeAutoBackup);
+  }
+
+  /// Writes a pending safety copy now (the app is going to the background).
+  static Future<void> flushPending() async {
+    if (_autoSaveTimer != null) await writeAutoBackup();
+  }
+
+  /// Drops a pending safety copy (restore / reset replace the data).
+  static void cancelPending() {
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = null;
+  }
+
+  /// Writes a snapshot of all `ls_*` keys to the internal documents
+  /// directory now (used by [autoSave], and after a restore).
+  static Future<void> writeAutoBackup() async {
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = null;
+    if (_autoSaving) {
+      _autoSaveAgain = true; // one more pass when the current one ends
+      return;
+    }
+    _autoSaving = true;
     try {
+      await LocalStore.flush();
       final prefs = await SharedPreferences.getInstance();
       final backup = <String, dynamic>{};
 
@@ -52,10 +88,24 @@ class BackupService {
       backup['_backup_version'] = 1;
 
       final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/$_autoBackupFileName');
-      await file.writeAsString(jsonEncode(backup));
+      final path = '${dir.path}/$_autoBackupFileName';
+      // Encoding and writing happen on a background isolate. Written to a
+      // temp file and renamed, so an interrupted write never leaves a
+      // half-written (unreadable) safety copy.
+      await Isolate.run(() {
+        // Named *.tmp.json so "Reset All Data" also removes a leftover.
+        final tmp = File(path.replaceFirst(RegExp(r'\.json$'), '.tmp.json'));
+        tmp.writeAsStringSync(jsonEncode(backup), flush: true);
+        tmp.renameSync(path);
+      });
     } catch (_) {
       // Fail silently – auto-backup is a best-effort safety net.
+    } finally {
+      _autoSaving = false;
+      if (_autoSaveAgain) {
+        _autoSaveAgain = false;
+        autoSave();
+      }
     }
   }
 
@@ -101,6 +151,7 @@ class BackupService {
   /// Creates a timestamped JSON backup and opens the share sheet.
   static Future<void> createAndShareBackup(BuildContext context) async {
     try {
+      await LocalStore.flush(); // include changes from the last moment
       final prefs = await SharedPreferences.getInstance();
       final backup = <String, dynamic>{};
 
@@ -191,9 +242,11 @@ class BackupService {
         return false;
       }
 
-      // Replace app data only (ls_* keys). Keeps unrelated prefs such as
-      // notification settings intact. The current data is kept in memory
+      // Replace app data only (ls_* keys); other prefs stay as they are.
+      // The current data is kept in memory
       // and put back if anything below fails.
+      cancelPending(); // no safety copy of a half-restored state
+      await LocalStore.flush(); // so the rollback copy is complete
       final prefs = await SharedPreferences.getInstance();
       final previous = <String, dynamic>{
         for (final k in prefs.getKeys())
@@ -201,13 +254,25 @@ class BackupService {
       };
       final previousUserId = userProvider.currentUser?.id;
       try {
+        // Unwritten changes must not land on top of the restored data.
+        LocalStore.discardPending();
         for (final key in prefs.getKeys().toList()) {
-          if (key.startsWith(_lsPrefix) && key != _pinKey) {
+          if (key.startsWith(_lsPrefix) &&
+              key != _pinKey &&
+              key != _intentAutoSaveKey) {
             await prefs.remove(key);
           }
         }
-        await _writeMapToPrefs(
-            prefs, Map.of(json)..remove(_pinKey)); // keep this phone's PIN
+        // Only app data (ls_*) is written; this phone's PIN and the
+        // "automation apps can save directly" switch are never taken from
+        // a file (a backup from someone else could turn that on).
+        await _writeMapToPrefs(prefs, {
+          for (final e in json.entries)
+            if (e.key.startsWith(_lsPrefix) &&
+                e.key != _pinKey &&
+                e.key != _intentAutoSaveKey)
+              e.key: e.value,
+        });
 
         await LocalStore.initialize();
 
@@ -216,6 +281,8 @@ class BackupService {
         expenseProvider.clearUserData();
         final ok = await userProvider.loginWithUserId(restoredUserId);
         if (!ok) throw userProvider.errorMessage ?? 'user not found';
+        await userProvider.initializeExpenseProvider(expenseProvider);
+        await captureProvider.reload(); // detected payments from the backup
       } catch (e) {
         // Put the phone's data back exactly as it was.
         for (final key in prefs.getKeys().toList()) {
@@ -234,14 +301,13 @@ class BackupService {
         ));
         return false;
       }
-      await userProvider.initializeExpenseProvider(expenseProvider);
-      await captureProvider.reload(); // detected payments from the backup
       // Optional features came back too: re-schedule the daily reminder.
       await AppPrefs.instance
           .reloadAfterDataChange(NotificationService.syncDailyReminder);
+      await NotificationService.syncDetectedNotifier();
 
       // Keep the shadow auto-backup in sync with what was just restored.
-      await autoSave();
+      await writeAutoBackup();
 
       navigator.popUntil((route) => route.isFirst);
       messenger.showSnackBar(
@@ -278,6 +344,18 @@ class BackupService {
               Map<String, dynamic>.from(jsonDecode(e.value as String) as Map));
         } else if (k == 'ls_users') {
           jsonDecode(e.value as String) as List;
+        } else if (k.startsWith('ls_recurring_')) {
+          for (final m in jsonDecode(e.value as String) as List) {
+            RecurringEntry.fromJson(Map<String, dynamic>.from(m as Map));
+          }
+        } else if (k.startsWith('ls_debts_')) {
+          for (final m in jsonDecode(e.value as String) as List) {
+            DebtEntry.fromJson(Map<String, dynamic>.from(m as Map));
+          }
+        } else if (k.startsWith('ls_detected_')) {
+          for (final m in jsonDecode(e.value as String) as List) {
+            DetectedTransaction.fromJson(Map<String, dynamic>.from(m as Map));
+          }
         }
       } catch (_) {
         return k.replaceFirst(_lsPrefix, '');

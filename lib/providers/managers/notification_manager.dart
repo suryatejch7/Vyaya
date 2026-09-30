@@ -10,13 +10,22 @@ class NotificationManager {
     required double categoryBudget,
     required double categorySpent,
     required bool isFirstExpense,
+    // How much this change added (an edit from ₹500 to ₹5,000 adds 4,500).
+    // Defaults to the whole amount, for a new expense.
+    double? increase,
+    // Large-payment alert only for payments you just made, not edits or
+    // recurring entries.
+    bool checkLargePayment = true,
   }) async {
+    final added = increase ?? expense.amount;
+    if (added <= 0) return;
     try {
       // Optional large-payment alert: only for fresh payments (logged
       // today), not back-dated entries or imported history.
       final limit = AppPrefs.instance.largePaymentAlert;
       final today = DateTime.now();
-      if (limit != null &&
+      if (checkLargePayment &&
+          limit != null &&
           expense.amount >= limit &&
           expense.date.year == today.year &&
           expense.date.month == today.month &&
@@ -39,7 +48,7 @@ class NotificationManager {
       );
       // Alert only for the expense that crosses the line, not for every
       // expense after it (e.g. "Add all" on several detected payments).
-      if (_crossed(monthlySpent, expense.amount, monthlyIncome)) {
+      if (_crossed(monthlySpent, added, monthlyIncome)) {
         await NotificationService.checkIncomeExceeded(
           monthlySpent,
           monthlyIncome,
@@ -48,10 +57,10 @@ class NotificationManager {
 
       // Optional early warnings at 80%, so there's time to slow down.
       if (AppPrefs.instance.earlyWarnings &&
-          await NotificationService.areNotificationsEnabled()) {
+          AppPrefs.instance.notificationsOn) {
         if (monthlyIncome > 0 &&
             monthlySpent <= monthlyIncome &&
-            _crossed(monthlySpent, expense.amount, monthlyIncome * 0.8)) {
+            _crossed(monthlySpent, added, monthlyIncome * 0.8)) {
           await NotificationService.showNearLimit(
             '80% of this month\'s income spent',
             '₹${(monthlyIncome - monthlySpent).toStringAsFixed(0)} left for the rest of the month.',
@@ -59,7 +68,7 @@ class NotificationManager {
         }
         if (categoryBudget > 0 &&
             categorySpent <= categoryBudget &&
-            _crossed(categorySpent, expense.amount, categoryBudget * 0.8)) {
+            _crossed(categorySpent, added, categoryBudget * 0.8)) {
           await NotificationService.showNearLimit(
             '${expense.category}: 80% of limit used',
             '₹${(categoryBudget - categorySpent).toStringAsFixed(0)} left of your ₹${categoryBudget.toStringAsFixed(0)} ${expense.category} limit.',
@@ -68,7 +77,7 @@ class NotificationManager {
       }
 
       if (categoryBudget > 0 &&
-          _crossed(categorySpent, expense.amount, categoryBudget)) {
+          _crossed(categorySpent, added, categoryBudget)) {
         await NotificationService.checkCategoryBudgetExceeded(
           expense.category,
           categorySpent,

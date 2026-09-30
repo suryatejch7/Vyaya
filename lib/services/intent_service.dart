@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import '../screens/add_expense_screen.dart';
+import 'app_prefs.dart';
 
 class IntentService {
   static const MethodChannel _channel = MethodChannel('com.vyaya/intent');
@@ -48,7 +49,11 @@ class IntentService {
     final payeeStr = data['payee']?.toString() ?? data['title']?.toString();
     final categoryStr = data['category']?.toString();
     final notesStr = data['notes']?.toString();
-    final autoSave = data['auto']?.toString().toLowerCase() == 'true';
+    // Any app can send this intent, so "auto" only saves without asking
+    // when you've allowed it in Optional features; otherwise the screen
+    // opens pre-filled for you to confirm.
+    final autoSave = data['auto']?.toString().toLowerCase() == 'true' &&
+        AppPrefs.instance.allowAutomationAutoSave;
 
     double? prefilledAmount;
     if (amountStr != null) {
@@ -63,6 +68,7 @@ class IntentService {
           prefilledCategory: categoryStr,
           prefilledNotes: notesStr,
           autoSave: autoSave,
+          fromAutomation: true,
         ),
       ),
     );

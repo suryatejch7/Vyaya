@@ -123,6 +123,74 @@ class AppPrefs extends ChangeNotifier {
     }
   }
 
+  // ---- Suggest new categories (on by default) ----
+
+  /// Offer to create a category (e.g. "Gym" for Nutrabay) when a payment
+  /// clearly belongs to a kind you have no category for.
+  bool get suggestNewCategories => _get('suggest_new_cat') != '0';
+
+  /// Turning it back on also brings back suggestions you dismissed.
+  Future<void> setSuggestNewCategories(bool v) async {
+    if (v) await _prefs?.setString('ls_opt_dismissed_groups', '');
+    await _set('suggest_new_cat', v ? '1' : '0');
+  }
+
+  /// Kinds ("fitness", "pets"…) you said to stop suggesting.
+  Set<String> get dismissedGroups => (_get('dismissed_groups') ?? '')
+      .split(',')
+      .where((s) => s.isNotEmpty)
+      .toSet();
+
+  Future<void> dismissGroup(String key) => _set('dismissed_groups',
+      ({...dismissedGroups, key}.toList()..sort()).join(','));
+
+  // ---- Automation apps (MacroDroid / Tasker) ----
+
+  /// Lets an ADD_EXPENSE intent with auto=true save without showing the
+  /// screen. Off by default: any installed app can send that intent.
+  bool get allowAutomationAutoSave => _get('intent_autosave') == '1';
+  Future<void> setAllowAutomationAutoSave(bool v) =>
+      _set('intent_autosave', v ? '1' : '0');
+
+  // ---- Notifications (Settings → Notifications) ----
+
+  /// Master switch: off means Vyaya shows no notifications at all.
+  bool get notificationsOn => _get('notif_all') != '0';
+  Future<void> setNotificationsOn(bool v) => _set('notif_all', v ? '1' : '0');
+
+  /// Earlier versions had one "Spending alerts" switch for both alerts
+  /// below; it's their starting value.
+  bool get _legacySpendingAlerts =>
+      _prefs?.getBool('notifications_enabled') ?? true;
+
+  /// "Spent more than your income this month".
+  bool get incomeAlerts {
+    final v = _get('alert_income');
+    return v == null ? _legacySpendingAlerts : v == '1';
+  }
+
+  Future<void> setIncomeAlerts(bool v) => _set('alert_income', v ? '1' : '0');
+
+  /// "<Category> went over its limit".
+  bool get categoryLimitAlerts {
+    final v = _get('alert_category');
+    return v == null ? _legacySpendingAlerts : v == '1';
+  }
+
+  Future<void> setCategoryLimitAlerts(bool v) =>
+      _set('alert_category', v ? '1' : '0');
+
+  /// "New payment detected" while Vyaya is closed.
+  bool get detectedPaymentNotifications => _get('notif_detected') != '0';
+  Future<void> setDetectedPaymentNotifications(bool v) =>
+      _set('notif_detected', v ? '1' : '0');
+
+  /// Plain weekly / monthly nudges when the app hasn't been opened (the
+  /// summaries with numbers need the app to have run). Off by default.
+  bool get inactivityNudges => _get('notif_nudges') == '1';
+  Future<void> setInactivityNudges(bool v) =>
+      _set('notif_nudges', v ? '1' : '0');
+
   // ---- Spending pace on Home ----
 
   bool get showSpendingPace => _get('pace') == '1';
@@ -182,7 +250,9 @@ class AppPrefs extends ChangeNotifier {
     return (v == null || v.isEmpty) ? null : v;
   }
 
-  bool get appLockEnabled => pinHash != null;
+  /// App lock is switched off for now, so a PIN saved earlier is ignored.
+  // bool get appLockEnabled => pinHash != null;
+  bool get appLockEnabled => false;
   Future<void> setPinHash(String? hash) => _set('pin_hash', hash ?? '');
 
   // ---- Late-night entries count as yesterday ----

@@ -109,12 +109,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final incomeIds = _selectedIncomeIds.toList();
     _clearSelection();
 
-    for (final id in expenseIds) {
-      await provider.deleteExpense(id);
-    }
-    for (final id in incomeIds) {
-      await provider.deleteIncome(id);
-    }
+    // One batch: a single save and refresh however many were selected.
+    await provider.deleteMany(expenseIds: expenseIds, incomeIds: incomeIds);
     showUndo(
       'Deleted $total item${total > 1 ? 's' : ''}',
       () async {
@@ -124,13 +120,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  ExpenseProvider? _provider;
+  DateTime? _shownMonth;
+
   @override
   void initState() {
     super.initState();
+    _provider = context.read<ExpenseProvider>();
+    _shownMonth = _provider!.viewMonth;
+    _provider!.addListener(_onDataChanged);
+  }
+
+  /// Keeps the selection to what's on screen: changing month clears it,
+  /// and entries deleted another way (⋮ menu, undo bar) drop out of it.
+  void _onDataChanged() {
+    final p = _provider;
+    if (p == null || !mounted || !_isSelectionMode) {
+      _shownMonth = p?.viewMonth;
+      return;
+    }
+    final monthChanged = p.viewMonth != _shownMonth;
+    _shownMonth = p.viewMonth;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isSelectionMode) return;
+      if (monthChanged) {
+        _clearSelection();
+        return;
+      }
+      final expenseIds = {for (final e in p.expenses) e.id};
+      final incomeIds = {for (final i in p.incomes) i.id};
+      final before = _totalSelected;
+      _selectedExpenseIds.removeWhere((id) => !expenseIds.contains(id));
+      _selectedIncomeIds.removeWhere((id) => !incomeIds.contains(id));
+      if (_totalSelected == before) return;
+      if (_totalSelected == 0) {
+        _clearSelection();
+      } else {
+        setState(() {});
+        _notifySelectionChanged();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _provider?.removeListener(_onDataChanged);
     _scrollController.dispose();
     super.dispose();
   }
@@ -286,6 +320,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       children: [
         PopupMenuButton<RecentViewType>(
           onSelected: (value) {
+            // Switching view (All / Expenses / Credit Card…) clears the
+            // selection, so Delete never removes entries you can't see.
+            if (value != _selectedViewType && _isSelectionMode) {
+              _clearSelection();
+            }
             setState(() {
               _selectedViewType = value;
             });

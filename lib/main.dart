@@ -11,7 +11,7 @@ import 'services/backup_service.dart';
 import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/undo_bar.dart';
-import 'widgets/app_lock.dart';
+// import 'widgets/app_lock.dart'; // app lock switched off for now
 import 'services/smart_notifications.dart';
 
 void main() async {
@@ -27,6 +27,7 @@ void main() async {
   // Initialize Notifications
   await NotificationService.initialize();
   await NotificationService.syncDailyReminder(AppPrefs.instance.reminderMinutes);
+  await NotificationService.syncDetectedNotifier();
 
   runApp(const MyApp());
 }
@@ -49,7 +50,9 @@ class MyApp extends StatelessWidget {
         navigatorKey: appNavigatorKey,
         debugShowCheckedModeBanner: false,
         builder: (context, child) =>
-            _SystemNavBarGuard(child: LockGate(child: UndoHost(child: child!))),
+            // App lock switched off for now:
+            // _SystemNavBarGuard(child: LockGate(child: UndoHost(child: child!))),
+            _SystemNavBarGuard(child: UndoHost(child: child!)),
       ),
     );
   }

@@ -17,6 +17,8 @@ class AddExpenseScreen extends StatefulWidget {
   final DateTime? prefilledDate;
   final String? prefilledAccountId;
   final bool autoSave;
+  // Sent by another app (MacroDroid intent): not used to learn categories.
+  final bool fromAutomation;
   // final ExtractedTransaction? extractedData; // screenshot scanning off
 
   const AddExpenseScreen({
@@ -31,6 +33,7 @@ class AddExpenseScreen extends StatefulWidget {
     this.prefilledDate,
     this.prefilledAccountId,
     this.autoSave = false,
+    this.fromAutomation = false,
     // this.extractedData, // screenshot scanning off
   });
 
@@ -56,6 +59,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   bool _categoryTouched = false;
   String? _defaultCategory;
   String? _payeePickedFor; // payee whose category was picked (for the hint)
+  bool _pickedFromRule = false; // your earlier choice vs the usual category
 
   @override
   void initState() {
@@ -168,19 +172,29 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     }
   }
 
-  /// Picks the payee's last-used category, or goes back to the starting
-  /// category when the payee no longer matches one.
+  /// Picks the payee's last-used category, else the usual one for a
+  /// well-known payee ("Swiggy" -> Food), or goes back to the starting
+  /// category when the payee no longer matches either.
   void _applyPayeeCategory({bool rebuild = true}) {
     if (_categoryTouched || _defaultCategory == null || !mounted) return;
     final name = _titleController.text.trim();
-    final learned = name.isEmpty
+    final cap = context.read<CaptureProvider>();
+    final learned = name.isEmpty ? null : cap.categoryForPayee(name);
+    final usual = name.isEmpty || learned != null
         ? null
-        : context.read<CaptureProvider>().categoryForPayee(name);
-    final next = learned ?? _defaultCategory!;
-    final pickedFor = learned == null ? null : name;
-    if (next == _selectedCategory && pickedFor == _payeePickedFor) return;
+        : cap.classicCategoryFor(name);
+    final picked = learned ?? usual;
+    final next = picked ?? _defaultCategory!;
+    final pickedFor = picked == null ? null : name;
+    final fromRule = learned != null;
+    if (next == _selectedCategory &&
+        pickedFor == _payeePickedFor &&
+        fromRule == _pickedFromRule) {
+      return;
+    }
     _selectedCategory = next;
     _payeePickedFor = pickedFor;
+    _pickedFromRule = fromRule;
     if (rebuild) setState(() {});
   }
 
@@ -243,7 +257,9 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 Padding(
                   padding: const EdgeInsets.only(left: 4, top: 6),
                   child: Text(
-                    'Last used for $_payeePickedFor',
+                    _pickedFromRule
+                        ? 'Last used for $_payeePickedFor'
+                        : 'Usual category for $_payeePickedFor',
                     style: TextStyle(fontSize: 12, color: Colors.grey[500]),
                   ),
                 ),
@@ -415,6 +431,14 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   }
 
   Widget _buildCategorySelector() {
+    // Fixed-size tiles: labels grow up to 1.3x with the phone's font size.
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.3,
+      child: _categorySelector(),
+    );
+  }
+
+  Widget _categorySelector() {
     return Consumer<ExpenseProvider>(
       builder: (context, provider, child) {
         // "Saved" is filled in by month-end savings, not picked by hand
@@ -705,7 +729,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
             .rememberUsed(expense.category, expense.accountId);
         // Typed-in expenses teach the payee's category (detected ones
         // opened with "Edit & add" learn through the capture flow).
-        if (widget.prefilledTransactionId == null) {
+        // Not from another app: it could teach a wrong category.
+        if (widget.prefilledTransactionId == null && !widget.fromAutomation) {
           capture.learnFromManual(title, expense.category);
         }
       }

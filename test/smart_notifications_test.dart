@@ -55,4 +55,23 @@ void main() {
       expect(body, contains('No spending logged'));
     });
   });
+
+  group('daily reminder skips days you logged something', () {
+    final now = DateTime(2026, 9, 30, 20);
+    test('manual expense today counts', () {
+      expect(
+          SmartNotifications.loggedToday(
+              [_e(50, 'Food', DateTime(2026, 9, 30, 9))], const [], now),
+          isTrue);
+    });
+    test('yesterday or automatic entries do not', () {
+      expect(
+          SmartNotifications.loggedToday([
+            _e(50, 'Food', DateTime(2026, 9, 29, 9)),
+            _e(900, 'Saved', DateTime(2026, 9, 30, 0),
+                tx: 'auto-saved-2026-08'),
+          ], const [], now),
+          isFalse);
+    });
+  });
 }

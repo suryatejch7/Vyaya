@@ -313,8 +313,17 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
       // Schedule changed: move the pending occurrence to the new day within
       // the same week / month / year it was due in (that period hasn't been
       // logged yet).
-      final nextDue =
+      var nextDue =
           sameSchedule ? old.nextDue : _schedule.occurrenceInPeriodOf(old.nextDue);
+      // If that new date has already passed and comes before the old due
+      // date, this period was already paid under the old schedule (e.g.
+      // monthly rent on the 25th switched to yearly on 25 Sep): start from
+      // the next one instead of logging it again.
+      if (!sameSchedule &&
+          !nextDue.isAfter(_today) &&
+          nextDue.isBefore(old.nextDue)) {
+        nextDue = _schedule.nextAfter(nextDue);
+      }
       await provider.updateRecurring(RecurringEntry(
         id: old.id,
         type: _type,

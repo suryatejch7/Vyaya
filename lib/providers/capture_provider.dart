@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -88,6 +89,7 @@ class CaptureProvider extends ChangeNotifier {
   }
 
   Future<void> _load() async {
+    _hintCache.clear();
     if (_userId == 0) return;
     final raw = await LocalStore.getJsonList(_itemsKey, userId: _userId);
     _items
@@ -196,10 +198,17 @@ class CaptureProvider extends ChangeNotifier {
         for (var round = 0; round < 50; round++) {
           final batch = await VyayaCapture.fetchPending(limit: 200);
           if (batch.isEmpty) break;
-          for (final record in batch) {
-            await _ingest(record);
+          final parsed = await _parseAll(batch);
+          for (var i = 0; i < batch.length; i++) {
+            await _ingest(batch[i], parsed[i]);
+            // Let a frame through now and then, so a big import doesn't
+            // freeze the screen.
+            if (i % 25 == 24) await Future<void>.delayed(Duration.zero);
           }
-          await _save(); // persist before acknowledging (crash-safe)
+          await _save();
+          // Written to storage before acknowledging, so nothing is lost if
+          // the app is closed right now (crash-safe).
+          await LocalStore.flush();
           await VyayaCapture.markConsumed(batch.map((r) => r.id).toList());
           notifyListeners();
         }
@@ -213,12 +222,32 @@ class CaptureProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _ingest(CaptureRecord r) async {
+  /// Reads the messages. A larger batch (an SMS import) is read on a
+  /// background isolate so the screen stays smooth; a few live messages are
+  /// read right here (starting an isolate would cost more).
+  static Future<List<ParseResult>> _parseAll(List<CaptureRecord> batch) {
+    final jobs = [
+      for (final r in batch)
+        (
+          r.body,
+          r.source == 'notification' ? 'notification' : 'sms',
+          r.sender,
+          r.postedAt,
+        ),
+    ];
+    List<ParseResult> run() => [
+          for (final j in jobs)
+            TransactionParser.parse(j.$1,
+                source: j.$2, sender: j.$3, postedAt: j.$4),
+        ];
+    if (jobs.length < 20) return Future.value(run());
+    return Isolate.run(run);
+  }
+
+  Future<void> _ingest(CaptureRecord r, ParseResult result) async {
     if (_items.any((i) => i.captureIds.contains(r.id))) return; // replay
 
     final kind = r.source == 'notification' ? 'notification' : 'sms';
-    final result = TransactionParser.parse(r.body,
-        source: kind, sender: r.sender, postedAt: r.postedAt);
     final t = result.transaction;
     if (t == null) return;
 
@@ -227,7 +256,7 @@ class CaptureProvider extends ChangeNotifier {
     if (_isMuted(merchant: t.merchant, sender: senderKey)) return;
 
     // 1) The same payment reported by another source (or re-read)?
-    final same = _findSamePayment(t, kind, r.postedAt);
+    final same = _findSamePayment(t, kind, r.postedAt, body: r.body);
     if (same != null) {
       await _merge(same, t, r);
       return;
@@ -297,6 +326,13 @@ class CaptureProvider extends ChangeNotifier {
     return longer.startsWith(shorter) || longer.endsWith(shorter);
   }
 
+  /// Both names are the same shop: the app says "Swiggy", the bank prints
+  /// the company "BUNDL TECHNOLOGIES" (or just "Bundl").
+  static bool _sameBrand(String a, String b) {
+    final ka = MerchantCategorizer.brandKey(a);
+    return ka.length >= 2 && ka == MerchantCategorizer.brandKey(b);
+  }
+
   static bool _merchantsMatch(String? a, String? b) {
     if (a == null || b == null) return false;
     final x = MerchantCategorizer.key(a);
@@ -315,15 +351,41 @@ class CaptureProvider extends ChangeNotifier {
   ///   the same payee;
   /// - same source -> only within 2 min (re-posted notification / re-read SMS).
   DetectedTransaction? _findSamePayment(
-      ParsedTransaction t, String kind, DateTime capturedAt) {
+      ParsedTransaction t, String kind, DateTime capturedAt,
+      {String? body}) {
     final horizon = capturedAt.subtract(const Duration(days: 14));
     for (final i in _items.reversed) {
       if (i.capturedAt.isBefore(horizon)) continue;
       if ((i.amount - t.amount).abs() > 0.009 || i.isDebit != t.isDebit) {
         continue;
       }
+      // The very same message again within minutes (re-posted notification,
+      // re-read SMS). The same text days later is a new payment
+      // ("₹20 paid to Ramu Tea Stall" every morning).
+      if (body != null &&
+          i.capturedAt.difference(capturedAt).abs() <=
+              const Duration(minutes: 10) &&
+          i.rawText.split('\n\n').contains(body)) {
+        return i;
+      }
       if (i.reference != null && t.reference != null) {
         if (_refsMatch(i.reference, t.reference)) return i;
+        continue;
+      }
+      // Two different named payees are two payments, however close in time
+      // (₹250 Swiggy on GPay, then ₹250 at DMart on a card 3 min later).
+      // Names that differ but are the same brand ("BUNDL TECHNOLOGIES" /
+      // "Swiggy") still count as one.
+      if (i.merchant != null &&
+          t.merchant != null &&
+          !_merchantsMatch(i.merchant, t.merchant) &&
+          !_sameBrand(i.merchant!, t.merchant!)) {
+        continue;
+      }
+      // An item that already combines two reports (app + bank SMS) only
+      // takes another one with the same payee, never on timing alone.
+      if (i.captureIds.length >= 2 &&
+          !_merchantsMatch(i.merchant, t.merchant)) {
         continue;
       }
       final gap = i.capturedAt.difference(capturedAt).abs();
@@ -752,10 +814,13 @@ class CaptureProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Category picked on a payment in the review list. Also remembered for
+  /// the payee, so their other waiting payments follow.
   Future<void> setCategory(String id, String category) async {
     final item = byId(id);
     if (item == null) return;
     _replace(item.copyWith(category: category));
+    if (item.isDebit) _learn(item.merchant, category);
     await _save();
     notifyListeners();
   }
@@ -792,9 +857,6 @@ class CaptureProvider extends ChangeNotifier {
     }
     merchant ??= payee;
     if (merchant == null || merchant.trim().isEmpty) return;
-    // A nameless detected payment's placeholder title isn't a payee.
-    const placeholders = {'upipayment', 'moneyreceived'};
-    if (placeholders.contains(MerchantCategorizer.key(merchant))) return;
     _learn(merchant, category);
     notifyListeners();
   }
@@ -812,19 +874,148 @@ class CaptureProvider extends ChangeNotifier {
     return exists ? cat : null;
   }
 
+  /// The usual category for a well-known payee ("Swiggy" -> Food), if you
+  /// have one for it.
+  String? classicCategoryFor(String payee) {
+    final group = MerchantCategorizer.groupFor(merchant: payee);
+    if (group == null) return null;
+    return MerchantCategorizer.categoryFor(group,
+        _expenses?.categories.map((c) => c.name).toList() ?? const [],
+        _categoryAliases());
+  }
+
   /// A new expense added by hand: remember its payee's category.
   void learnFromManual(String payee, String category) {
     if (category == ExpenseProvider.savedCategoryName) return;
     _learn(payee, category);
   }
 
+  /// Remembers [category] for the payee and moves their other payments
+  /// still waiting for review to it (already-added ones are left alone:
+  /// the same person can be paid for different things).
   void _learn(String? merchant, String category) {
     if (merchant == null) return;
     if (!AppPrefs.instance.rememberPayeeCategory) return;
+    // "Saved" is only for month-end savings, never a payee's category.
+    if (category == ExpenseProvider.savedCategoryName) return;
     final k = MerchantCategorizer.key(merchant);
     if (k.length < 2) return;
+    // A nameless detected payment's placeholder title isn't a payee.
+    if (k == 'upipayment' || k == 'moneyreceived') return;
     _rules[k] = category;
     _saveRules();
+    var moved = false;
+    for (final i in List.of(_items)) {
+      if (i.isPending &&
+          i.isDebit &&
+          i.category != category &&
+          i.merchant != null &&
+          MerchantCategorizer.key(i.merchant!) == k) {
+        _replace(i.copyWith(category: category));
+        moved = true;
+      }
+    }
+    if (moved) {
+      _save();
+      notifyListeners();
+    }
+  }
+
+  // ------------------------------------------------- new-category suggestions
+
+  /// "Looks like Gym": the kind of spending a waiting payment belongs to,
+  /// when you have no category for it and it's still in "Other". Null when
+  /// suggestions are off, dismissed for that kind, or you already chose a
+  /// category for this payee.
+  CategoryGroup? newCategoryHint(DetectedTransaction item) {
+    // Cached per payment until something it depends on changes.
+    final prefs = AppPrefs.instance;
+    final names = _expenses?.categories.map((c) => c.name).toList() ?? [];
+    final stamp = Object.hash(
+        item.category,
+        item.merchant,
+        item.rawText,
+        item.status,
+        Object.hashAll(names),
+        prefs.suggestNewCategories,
+        Object.hashAll(prefs.dismissedGroups),
+        prefs.rememberPayeeCategory,
+        _rules.length);
+    final cached = _hintCache[item.id];
+    if (cached != null && cached.$1 == stamp) return cached.$2;
+    final hint = _computeHint(item);
+    _hintCache[item.id] = (stamp, hint);
+    return hint;
+  }
+
+  final Map<String, (int, CategoryGroup?)> _hintCache = {};
+
+  CategoryGroup? _computeHint(DetectedTransaction item) {
+    final prefs = AppPrefs.instance;
+    if (!item.isDebit || !item.isPending || !prefs.suggestNewCategories) {
+      return null;
+    }
+    final names = _expenses?.categories.map((c) => c.name).toList() ?? [];
+    if (item.category != MerchantCategorizer.fallbackCategory(names)) {
+      return null;
+    }
+    final m = item.merchant;
+    if (m != null && _activeRules.containsKey(MerchantCategorizer.key(m))) {
+      return null;
+    }
+    final group =
+        MerchantCategorizer.groupFor(merchant: m, rawText: item.rawText);
+    if (group == null ||
+        !group.offerCreate ||
+        prefs.dismissedGroups.contains(group.key) ||
+        MerchantCategorizer.categoryFor(group, names, _categoryAliases()) !=
+            null) {
+      return null;
+    }
+    return group;
+  }
+
+  /// Creates the suggested category (or reuses one with that name) and
+  /// re-sorts every waiting payment still in "Other", so all the Nutrabay /
+  /// MuscleBlaze ones move to the new "Gym" at once. Returns its name.
+  Future<String> createCategoryForGroup(CategoryGroup group) async {
+    final ep = _expenses!;
+    var name = group.name;
+    final same = ep.categories
+        .where((c) => c.name.toLowerCase() == group.name.toLowerCase());
+    if (same.isNotEmpty) {
+      name = same.first.name;
+    } else {
+      final hex = (group.color & 0xFFFFFF).toRadixString(16).padLeft(6, '0');
+      await ep.addCustomCategory(ExpenseCategory(
+        id: 'grp_${group.key}_${DateTime.now().millisecondsSinceEpoch}',
+        name: group.name,
+        icon: group.icon,
+        colorHex: '#$hex',
+      ));
+    }
+    final names = ep.categories.map((c) => c.name).toList();
+    final fallback = MerchantCategorizer.fallbackCategory(names);
+    for (final i in List.of(_items)) {
+      if (!i.isPending || !i.isDebit || i.category != fallback) continue;
+      final cat = MerchantCategorizer.suggest(
+        merchant: i.merchant,
+        rawText: i.rawText,
+        categoryNames: names,
+        learned: _activeRules,
+        aliases: _categoryAliases(),
+      );
+      if (cat != i.category) _replace(i.copyWith(category: cat));
+    }
+    await _save();
+    notifyListeners();
+    return name;
+  }
+
+  /// "Stop suggesting Gym".
+  Future<void> dismissGroup(CategoryGroup group) async {
+    await AppPrefs.instance.dismissGroup(group.key);
+    notifyListeners();
   }
 
   // --------------------------------------------------------- bank accounts

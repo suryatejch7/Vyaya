@@ -1,0 +1,448 @@
+VYAYA - CATEGORY KEYWORDS
+(The app's copy lives in lib/services/capture/merchant_categorizer.dart; this file is the readable version.)
+=========================================================================
+
+How to read this file
+- EXISTING : already in the app today (lib/services/capture/merchant_categorizer.dart)
+- NEW      : proposed additions, not in the app yet
+- MOVED    : already in the app, but proposed to go under a different group
+- REMOVE   : already in the app, proposed to drop (too generic, causes wrong matches)
+
+Matching rules (proposed)
+- Case, spaces, dots, dashes and underscores are ignored:
+  "Burger King", "BURGERKING", "burger_king", "burgerking@ybl" all match "burger king".
+- Longer names win over shorter ones: "swiggy instamart" (Groceries) beats "swiggy" (Food),
+  "amazon fresh" (Groceries) beats "amazon" (Shopping), "jiomart" beats "jio".
+- Names of 4 letters or fewer must be a whole word: "ola" won't match "cola", "kfc" won't
+  match inside another word.
+- Longer names must be the whole word (plus "s"/"es", e.g. "medicals"), or start a word
+  followed by 3+ letters (UPI handles like "zomatoonline"). So first names like "Bhavana"
+  don't match "bhavan". Brands that are also common first names (Nandini, Yashoda,
+  Aakash...) only match with a second word ("nandini milk", "yashoda hospital").
+- Your own choice for a payee always wins over this list.
+- This list is matched against the PAYEE name only (e.g. "BURGER KING", "swiggy@icici").
+  A short separate list of message words (electricity, EMI, recharge, rent, insurance,
+  fees...) is checked in the rest of the SMS only when the payee didn't match, so words
+  like "unlimited" or "auto-debit" in an SMS can't pick a category.
+
+Each group says which of YOUR categories it goes to:
+  "Goes to"  = the category it uses (first one of these that exists in your categories)
+  "If none"  = what Vyaya offers to create when none of them exist
+
+
+-------------------------------------------------------------------------
+1. FOOD  -  Goes to: Food / Dining / Eating out / Restaurants   If none: Food
+-------------------------------------------------------------------------
+EXISTING:
+  swiggy, zomato, dunzo, domino, pizza, mcdonald, kfc, burger, subway, starbucks,
+  cafe, coffee, chai, tea, restaurant, dhaba, bakery, sweets, food, biryani,
+  canteen, mess, juice, haldiram, barbeque, eatery, kitchen, tiffin, ccd
+
+NEW - delivery / apps:
+  swiggy dineout, zomato gold, eatsure, eat sure, box8, faasos, behrouz biryani,
+  ovenstory, magicpin, eatfit, fresh menu, freshmenu, rebel foods, thrive, dineout,
+  eazydiner, eazydine, zomato district, pluxee, sodexo, zeta meal (meal cards)
+NEW - pizza / burgers / fast food chains:
+  dominos, domino's, pizza hut, la pinoz, lapinoz, oven story, mojo pizza,
+  burger king, burgerking, mcdonalds, mcd, wendy's, wendys, jumboking, burger singh,
+  taco bell, kfc india, popeyes, wow momo, wowmomo, momo, faaso's, biryani by kilo,
+  biryani blues, paradise biryani, behrouz, meghana foods, nandos, nando's
+NEW - cafes / tea / coffee / desserts:
+  cafe coffee day, third wave coffee, blue tokai, tim hortons, costa coffee,
+  barista, chaayos, chai point, chai sutta bar, tea post, mad over donuts,
+  krispy kreme, baskin robbins, naturals ice cream, cream stone, havmor,
+  amul parlour, keventers, theobroma, the belgian waffle, belgian waffle,
+  wafflesome, hocco, ibaco, dunkin, bikanervala, haldirams, anand sweets,
+  karachi bakery, brijwasi, agarwal sweets, chitale
+NEW - restaurant chains / QSR:
+  barbeque nation, absolute barbecues, ab's, mainland china, social, hard rock cafe,
+  punjab grill, saravana bhavan, a2b, adyar ananda bhavan, sagar ratna, vaango,
+  udupi, mtr, rameshwaram cafe, the rameshwaram cafe, cafe niloufer, niloufer,
+  bawarchi, shah ghouse, pista house, hotel, bar, pub, brewery, food court,
+  foodcourt, zomato order, swiggy order, dosa, idli, thali, meals, lunch, dinner,
+  breakfast, snacks, pani puri, chaat, shawarma, rolls, sandwich, bakes, patisserie
+
+-------------------------------------------------------------------------
+2. GROCERIES  -  Goes to: Groceries / Grocery / Kirana / Food   If none: Food
+   (Groceries go to your "Food" category unless you make a Groceries one)
+-------------------------------------------------------------------------
+EXISTING (currently listed under Food):
+  instamart, blinkit, zepto, bigbasket, grocery, groceries, kirana, vegetable,
+  fruits, milk, dairy, big bazaar, bigbazaar, more retail, spencer, star bazaar,
+  jiomart, nature basket, ratnadeep, provision
+
+NEW:
+  swiggy instamart, amazon fresh, flipkart minutes, flipkart supermart, bb now,
+  bbnow, bb daily, bbdaily, milkbasket, country delight, dmart ready, jiomart express,
+  zepto cafe, dunzo daily, kpn fresh, fresh to home, freshtohome, licious, tendercuts,
+  meatigo, zappfresh, pluckk, otipy, vegetables, sabzi, fruit, eggs, meat, chicken,
+  mutton, fish, supermarket, hypermarket, spar, spar hypermarket, more supermarket,
+  reliance fresh, reliance smart, smart bazaar, reliance smart bazaar, heritage fresh,
+  vijetha supermarkets, lulu hypermarket, nilgiris, foodworld, easyday, 24seven,
+  natures basket, amul, nandini milk, nandini parlour, aavin, mother dairy,
+  heritage foods, akshayakalpa,
+  grocer, general store, departmental store, super market, provisions, kirana store
+
+-------------------------------------------------------------------------
+3. TRANSPORT & TRAVEL  -  Goes to: Transport / Travel / Commute / Fuel   If none: Transport
+-------------------------------------------------------------------------
+EXISTING:
+  uber, ola, rapido, irctc, metro, railway, redbus, abhibus, petrol, fuel, hpcl,
+  iocl, bpcl, indian oil, fastag, parking, cab, namma yatri, yulu, indigo,
+  air india, akasa, spicejet, makemytrip, goibibo, cleartrip, ixigo, bus, toll
+
+REMOVE:
+  shell  (matches too many unrelated names; replaced by "shell petrol", "shell fuel")
+
+NEW - cabs / bikes / autos:
+  uber india, ola cabs, olacabs, rapido bike, bluesmart, blu smart, meru, megacabs,
+  savaari, quick ride, quickride, bounce, vogo, zoomcar, revv, drivezy,
+  auto rickshaw, autorickshaw, taxi
+NEW - fuel / EV / FASTag / tolls:
+  hp petrol, hindustan petroleum, bharat petroleum, iocl fuel, indianoil, nayara,
+  essar, reliance petrol, jio-bp, jio bp, shell petrol, shell fuel, petrol pump,
+  petrol bunk, fuel station, cng, ev charging, tata power ez charge, statiq,
+  chargezone, ather grid, netc, nhai, fastag recharge, paytm fastag
+NEW - trains / metro / buses:
+  irctc eticket, uts, indian railways, confirmtkt, trainman, railyatri,
+  bmrcl, namma metro, dmrc, delhi metro, mumbai metro, hyderabad metro, l&t metro,
+  chennai metro, kochi metro, bmtc, best bus, ksrtc, tsrtc, apsrtc, msrtc, gsrtc,
+  upsrtc, zingbus, intrcity, flixbus, chalo
+NEW - flights / stays / trips:
+  vistara, air india express, akasa air, spice jet, go first, alliance air,
+  easemytrip, yatra, happyfares, airasia, emirates, qatar airways, lufthansa,
+  oyo, oyo rooms, treebo, fabhotels, fab hotels, zostel, airbnb, booking.com,
+  agoda, trivago, taj hotels, marriott, ibis, lemon tree, ginger hotels,
+  thomas cook, sotc, veena world, airport, lounge
+
+-------------------------------------------------------------------------
+4. SHOPPING  -  Goes to: Shopping / Clothes / Electronics   If none: Shopping
+-------------------------------------------------------------------------
+EXISTING:
+  amazon, flipkart, myntra, ajio, meesho, nykaa, tata cliq, croma, reliance, dmart,
+  decathlon, lifestyle, westside, zara, ikea, lenskart, store, mart, mall, shop,
+  supermarket, trends, pantaloons, max fashion, vijay sales
+
+MOVED:
+  supermarket -> Groceries
+  dmart -> Groceries (most DMart bills are groceries)
+  stationery -> Education only
+  (nykaa stays in Shopping, as you asked)
+REMOVE (too generic, matched e.g. "Ramesh Medical Store" as Shopping):
+  store, mart, shop, mall   (kept only as last-resort words in the message text)
+
+NEW - online:
+  amazon.in, amazon pay, amzn, flipkart internet, snapdeal, shopsy, jiomart digital,
+  tata neu, tatacliq, firstcry, hopscotch, pepperfry, urban ladder, wakefit,
+  sleepyhead, duroflex, home centre, homecentre, hometown, nykaa fashion,
+  the souled store, souled store, bewakoof, snitch, h&m, uniqlo, marks & spencer,
+  marks and spencer, m&s, levis, levi's, puma, adidas, nike, reebok, skechers,
+  bata, metro shoes, mochi, woodland, red tape, campus shoes, allen solly,
+  van heusen, peter england, louis philippe, raymond, fabindia, biba, w for woman,
+  global desi, manyavar, mufti, jack & jones, vero moda, forever 21,
+  shoppers stop, v-mart, vmart, style union, zudio, trends footwear,
+  caratlane, tanishq, kalyan jewellers, malabar gold, bluestone, giva
+NEW - electronics / gadgets:
+  reliance digital, apple store, apple india, imagine store, samsung, oneplus,
+  xiaomi, mi store, realme, vivo, oppo, boat, noise, fire-boltt, sony center,
+  poorvika, sangeetha mobiles, bajaj electronics, girias, unicorn store,
+  amazon basics, dell, hp store, lenovo, asus
+NEW - home / misc:
+  ikea india, daiso, miniso, archies, ferns n petals, fnp, igp, bigsmall,
+  hamleys, stationery shop, hardware, paints, asian paints
+
+-------------------------------------------------------------------------
+5. ENTERTAINMENT  -  Goes to: Entertainment / Fun / Movies / Leisure   If none: Entertainment
+-------------------------------------------------------------------------
+EXISTING:
+  netflix, spotify, hotstar, jiocinema, prime video, youtube, sonyliv, zee5,
+  bookmyshow, pvr, inox, cinepolis, steam, playstation, xbox, apple music, gaana,
+  wynk, district
+
+NEW:
+  disney+ hotstar, disney hotstar, jiohotstar, youtube premium, amazon prime,
+  prime membership, apple tv, mubi, aha, sun nxt, sunnxt, hoichoi, alt balaji,
+  altbalaji, voot, erosnow, eros now, mx player, lionsgate play, discovery+,
+  crunchyroll, audible, kuku fm, pocket fm, storytel, jiosaavn, saavn,
+  apple one, bms, paytm insider, insider.in, district by zomato, ticketnew,
+  pvr inox, carnival cinemas, miraj cinemas, movietime, cinema, movie, multiplex,
+  concert, gaming, epic games, google play games, riot games, valorant,
+  pubg, bgmi, garena, free fire, dream11, my11circle, mpl, winzo, rummy,
+  smaaash, timezone, wonderla, imagica, snow world, bowling, go karting
+
+-------------------------------------------------------------------------
+6. HEALTH  -  Goes to: Health / Medical / Medicine / Healthcare   If none: Health
+-------------------------------------------------------------------------
+EXISTING:
+  apollo, pharmeasy, 1mg, netmeds, medplus, pharmacy, chemist, medical, hospital,
+  clinic, diagnostic, practo, doctor, dental
+
+MOVED:
+  cult, healthkart -> Fitness
+
+NEW:
+  apollo pharmacy, apollo 247, apollo hospitals, tata 1mg, truemeds, frank ross,
+  wellness forever, guardian pharmacy, noble plus, davaindia, jan aushadhi,
+  medicines, medicals, drug house, fortis, manipal hospitals, max healthcare,
+  narayana health, aster hospital, aster clinic, kims hospital,
+  yashoda hospital, care hospitals, rainbow hospitals,
+  cloudnine, motherhood, aiims, dr lal pathlabs, lal pathlabs, thyrocare,
+  metropolis, srl diagnostics, redcliffe, healthians, orange health, tata health,
+  mfine, tata aig health, star health, niva bupa, care health, eye care,
+  vision express, titan eye plus, eye hospital, physiotherapy, physio, lab test,
+  scan centre, x-ray, mri
+
+-------------------------------------------------------------------------
+7. FITNESS  (NEW GROUP)  -  Goes to: Gym / Fitness / Workout / Sports / Exercise   If none: offer "Gym"
+-------------------------------------------------------------------------
+MOVED (from Health):
+  cult, healthkart
+
+NEW - gyms / classes / apps:
+  cult.fit, cultfit, curefit, gold's gym, golds gym, anytime fitness,
+  snap fitness, talwalkars, fitness first, crunch fitness, f45, multifit,
+  fitternity, fittr, healthifyme, healthify, hrx, strava, nike training, yoga,
+  zumba, crossfit, gym, fitness centre, fitness center, swimming pool, sports club,
+  badminton court, playo, hudle, turf, box cricket
+NEW - supplements / protein:
+  nutrabay, muscleblaze, muscle blaze, optimum nutrition, myprotein, my protein,
+  gnc, as-it-is, asitis, avvatar, big muscles, bigmuscles, nakpro, the whole truth,
+  wellcore, fast&up, fast and up, oziva, true basics, amway, herbalife, protein,
+  whey, creatine, supplement, supplements
+NEW - gear:
+  decathlon sports, sportsuncle, sg cricket, nivia, cosco, yonex
+
+-------------------------------------------------------------------------
+8. BILLS & UTILITIES  -  Goes to: Bills / Utilities / Rent / Recharge   If none: Bills
+-------------------------------------------------------------------------
+EXISTING:
+  airtel, jio, vodafone, bsnl, act fibernet, broadband, electricity, bescom, bses,
+  tata power, adani, msedcl, kseb, water, gas, indane, bharat gas, recharge, dth,
+  tata play, rent, insurance, lic, emi, bill, postpaid, maintenance
+
+NEW - mobile / internet / DTH:
+  vi, vodafone idea, airtel xstream, airtel broadband, jiofiber, jio fiber,
+  airfiber, hathway, excitel, you broadband, spectra, tikona, railwire,
+  alliance broadband, asianet, bsnl ftth, mtnl, dish tv, d2h, sun direct, tataplay,
+  videocon d2h, airtel dth, prepaid, mobile recharge
+NEW - electricity / water / gas:
+  tneb, tangedco, tsspdcl, tsnpdcl, apspdcl, apepdcl, cesc, wbsedcl, mahavitaran,
+  mseb, best electricity, torrent power, reliance energy, adani electricity,
+  tata power ddl, bses rajdhani, bses yamuna, uppcl, pspcl, jvvnl, avvnl, jdvvnl,
+  hescom, gescom, mescom, cescom, kptcl, tnpdcl, bwssb, hmwssb, djb, delhi jal board,
+  mgl, mahanagar gas, igl, indraprastha gas, adani gas, gujarat gas, hp gas,
+  bharatgas, indane gas, piped gas, lpg, cylinder
+NEW - rent / housing / society:
+  nobroker, nestaway, housing.com, magicbricks, society maintenance, mygate,
+  nobrokerhood, apartment, pg rent, hostel fees, house rent, rent payment, cred rent
+NEW - insurance / EMIs / cards (flagged separately when it's a card bill):
+  policybazaar, acko, digit insurance, go digit, icici lombard, hdfc ergo,
+  bajaj allianz, tata aig, sbi life, hdfc life, max life, lic premium,
+  loan emi, home loan, car loan, bike loan, personal loan, bajaj finserv,
+  bajaj finance, home credit, tata capital, muthoot, manappuram
+NEW - govt / taxes / misc:
+  property tax, income tax, gst payment, challan, traffic fine, parivahan,
+  passport seva, bbmp, ghmc, municipal, water tax, bescom bill
+
+-------------------------------------------------------------------------
+9. EDUCATION  -  Goes to: Education / Study / College / Books   If none: Education
+-------------------------------------------------------------------------
+EXISTING:
+  udemy, coursera, byju, unacademy, vedantu, upgrad, college, university, school,
+  fees, tuition, exam, books, stationery, course, academy, institute
+
+NEW:
+  byju's, byjus, physics wallah, allen career, aakash institute, aakash educational, fiitjee, resonance, toppr,
+  doubtnut, testbook, adda247, gradeup, simplilearn, great learning, scaler,
+  newton school, masai school, coding ninjas, geeksforgeeks, leetcode, codechef,
+  interviewbit, educative, pluralsight, linkedin learning, skillshare, edx,
+  khan academy, duolingo, cuemath, whitehat jr, brainly, chegg, kindle, amazon kindle,
+  sapna book house, crossword, oxford bookstore, higginbotham, pustak, exam fee,
+  application fee, semester fee, hostel fee, library, coaching, nptel, ielts, toefl,
+  gre, gmat, ets
+
+-------------------------------------------------------------------------
+10. PERSONAL CARE  (NEW GROUP)  -  Goes to: Personal Care / Grooming / Beauty / Salon / Self care   If none: offer "Personal Care"
+-------------------------------------------------------------------------
+NEW:
+  urban company, urbanclap, salon, parlour, parlor, barber, spa, lakme salon,
+  naturals salon, green trends, jawed habib, toni&guy, toni and guy, enrich salon,
+  looks salon, bodycraft, yes madam, purplle, mamaearth, sugar cosmetics, plum,
+  minimalist, the derma co, wow skin science, beardo, bombay shaving company,
+  the man company, ustraa, forest essentials, kama ayurveda, body shop,
+  bath & body works, sephora, myglamm, tira
+
+-------------------------------------------------------------------------
+11. SUBSCRIPTIONS & APPS  (NEW GROUP)  -  Goes to: Subscriptions / Apps / Software   If none: Bills
+    (goes to Bills if you don't have a Subscriptions category; no create offer)
+-------------------------------------------------------------------------
+NEW:
+  google one, google play, google storage, google workspace, youtube membership,
+  apple.com/bill, apple icloud, icloud, itunes, app store, microsoft, microsoft 365,
+  office 365, xbox game pass, adobe, canva, chatgpt, openai, claude, anthropic,
+  notion, dropbox, zoom, linkedin premium, tinder, bumble, hinge, truecaller,
+  expressvpn, nordvpn, github, jetbrains, figma, telegram, telegram premium,
+  google cloud
+
+-------------------------------------------------------------------------
+12. INVESTMENTS  (NEW GROUP)  -  Goes to: Investments / Investment / Savings / SIP / Stocks   If none: offer "Investments"
+-------------------------------------------------------------------------
+NEW:
+  zerodha, zerodha coin, zerodha kite, groww, upstox, angel one, angelone, angel broking,
+  5paisa, paytm money, indmoney, ind money, kuvera, et money, etmoney, smallcase,
+  dhan app, fyers, motilal oswal, icici direct, icicidirect, hdfc securities,
+  kotak securities, sharekhan, sbi mf, sbi mutual fund, hdfc mutual fund,
+  icici prudential mf, axis mutual fund, nippon india mf, mirae asset, parag parikh,
+  ppfas, quant mf, uti mf, bse star mf, mf utilities, cams, kfintech, nps,
+  national pension, ppf, sukanya samriddhi, recurring deposit, fixed deposit,
+  sip, mutual fund, digital gold, safegold, mmtc-pamp, augmont, jar app,
+  gullak, stable money, wint wealth, grip invest, goldenpi
+
+-------------------------------------------------------------------------
+13. PETS  (NEW GROUP)  -  Goes to: Pets / Pet   If none: offer "Pets"
+-------------------------------------------------------------------------
+NEW:
+  supertails, heads up for tails, hutf, zigly, wiggles, drools, pedigree,
+  royal canin, whiskas, petsy, pet shop, pet store, pet clinic, vet, veterinary,
+  pet hospital, dog food, cat food
+
+-------------------------------------------------------------------------
+14. DONATIONS & GIFTS  (NEW GROUP)  -  Goes to: Donations / Charity / Gifts   If none: offer "Donations"
+-------------------------------------------------------------------------
+NEW:
+  giveindia, give india, ketto, milaap, impact guru, donatekart, cry india,
+  akshaya patra, helpage, goonj, smile foundation, unicef, temple, mandir,
+  gurudwara, church, mosque, masjid, donation, charity, hundi
+
+-------------------------------------------------------------------------
+NOT MATCHED ON PURPOSE
+-------------------------------------------------------------------------
+  People's names (Rahul, Priya...) are never guessed from this list; they only get a
+  category from what you picked for them before.
+  Payment apps on their own (paytm, phonepe, google pay, gpay, bhim, mobikwik, cred)
+  don't decide the category; the payee after them does ("Paytm - Zomato" -> Food).
+  Banks (hdfc, sbi, icici...) are never used as a payee.
+
+
+=========================================================================
+HOW SHOPS SHOW UP IN BANK SMS / UPI  (NEW - so the list above still works)
+=========================================================================
+Banks often print the company's legal name, a payment-gateway prefix, or a
+UPI handle instead of the brand. Vyaya cleans these first, then matches.
+
+A) Payment-gateway prefixes are removed before matching (NEW)
+   "PAYU*SWIGGY", "RAZ*ZEPTO", "RAZORPAY SWIGGY", "BILLDESK*TATAPOWER",
+   "CCAVENUE-IRCTC", "PAYTM*ZOMATO", "PHONEPE*UBER", "CASHFREE*NUTRABAY",
+   "JUSPAY-", "EASEBUZZ", "INSTAMOJO", "PINELABS", "PG-", "ECOM-", "POS "
+     -> matched as swiggy / zepto / tata power / irctc / zomato / uber / nutrabay
+
+B) UPI handles: the part before "@" is used, dots/digits trimmed (EXISTING idea, improved)
+   swiggy.stores@axb, swiggyupi@axisbank      -> swiggy      -> Food
+   zomato.payu@axisbank, zomatoonline@hdfc    -> zomato      -> Food
+   bigbasket.rzp@icici                         -> bigbasket   -> Groceries
+   irctc.eticket@sbi                           -> irctc       -> Transport
+   Handles that say nothing (paytmqr..., Q123456@ybl, BHARATPE.xxx@unitype,
+   gpay-11223@okbizaxis, 9876543210@ybl) are NOT guessed.
+
+C) Legal / company names -> brand (NEW)
+   Food:
+     bundl technologies, swiggy limited, swiggy ltd              -> Swiggy
+     eternal limited, eternal ltd, zomato limited, zomato ltd,
+       zomato media                                                -> Zomato
+     jubilant foodworks                                            -> Domino's
+     restaurant brands asia, burger king india                    -> Burger King
+     hardcastle restaurants, westlife foodworld,
+       connaught plaza restaurants                                 -> McDonald's
+     devyani international, sapphire foods                        -> KFC / Pizza Hut
+     tata starbucks                                               -> Starbucks
+     coffee day global, coffee day enterprises                    -> CCD
+     rebel foods                                                  -> Faasos / Behrouz / Ovenstory
+     barbeque nation hospitality                                  -> Barbeque Nation
+     hungerbox, mealful                                           -> office canteen
+     wow momo foods, chaayos (sunshine teahouse), mountain trail foods (chai point)
+   Groceries:
+     blink commerce, grofers india                                -> Blinkit
+     kiranakart technologies, zepto private limited, zepto pvt    -> Zepto
+     innovative retail concepts, supermarket grocery supplies     -> BigBasket
+     avenue supermarts, avenue e-commerce                         -> DMart
+     reliance smart, reliance fresh                               -> Reliance Smart
+     licious (delightful gourmet), freshtohome foods, country delight
+   Transport:
+     ani technologies                                             -> Ola
+     roppen transportation                                        -> Rapido
+     uber india systems                                           -> Uber
+     indian railway catering                                      -> IRCTC
+     interglobe aviation                                          -> IndiGo
+     makemytrip india, ibibo group (goibibo), yatra online, le travenues (ixigo)
+     oravel stays                                                 -> OYO
+     bharat petroleum, hindustan petroleum, indian oil corporation -> fuel
+   Shopping:
+     amazon seller services, amazon pay india, amazon retail      -> Amazon
+     flipkart internet, instakart                                 -> Flipkart
+     myntra designs                                               -> Myntra
+     fashnear technologies                                        -> Meesho
+     fsn e-commerce, nykaa e-retail                               -> Nykaa
+     trent limited                                                -> Westside / Zudio
+     lenskart solutions, infiniti retail (croma), reliance digital
+   Health:
+     api holdings, axelia solutions                               -> PharmEasy
+     tata 1mg healthcare                                          -> Tata 1mg
+     netmeds marketplace, vitalic health                          -> Netmeds
+     apollo healthco, apollo 24/7                                 -> Apollo
+   Fitness:
+     curefit healthcare                                           -> cult.fit
+     bright lifecare                                              -> HealthKart / MuscleBlaze
+     nutrabay retail                                              -> Nutrabay
+   Entertainment:
+     big tree entertainment                                       -> BookMyShow
+     pvr inox, pvr limited                                        -> PVR
+     netflix entertainment services india                         -> Netflix
+     spotify india                                                -> Spotify
+     novi digital entertainment, jiostar                          -> Hotstar
+     sporta technologies                                          -> Dream11
+   Bills:
+     bharti airtel, bharti hexacom                                -> Airtel
+     reliance jio infocomm                                        -> Jio
+     vodafone idea                                                -> Vi
+     tata play limited                                            -> Tata Play
+   Personal Care:
+     urbanclap technologies                                       -> Urban Company
+   Investments:
+     zerodha broking                                              -> Zerodha
+     nextbillion technology, groww invest                         -> Groww
+     rksv securities                                              -> Upstox
+     angel one limited                                            -> Angel One
+   Subscriptions:
+     google india digital, google play                            -> Google Play
+     apple services, apple media services                         -> Apple
+
+D) Generic shop words (NEW) - used when the payee is a local shop, e.g.
+   "SRI LAKSHMI MEDICALS", "AMMA TIFFIN CENTRE", "RAJU FILLING STATION"
+   Food:          hotel, restaurant, bhavan, bhojanalaya, dhaba, darshini, udupi,
+                  tiffin, tiffins, mess, canteen, caterers, cafe, bakers, bakery,
+                  sweets, sweet house, juice, juice centre, tea stall, chai,
+                  biryani, fast food, foods, food court, ice cream, pan shop
+   Groceries:     kirana, general store, general stores, provision, provisions,
+                  supermarket, super market, departmental, vegetables, fruits,
+                  dairy, milk, chicken, mutton, meat, fish, eggs
+   Transport:     filling station, service station, petroleum, fuels, fuel,
+                  petrol pump, automobiles (fuel pumps), toll plaza, parking,
+                  car wash, tyres, garage, motors service
+   Shopping:      textiles, garments, fashions, footwear, shoes, jewellers,
+                  jewellery, watches, gifts, toys, electronics, mobiles,
+                  mobile shop, computers, hardware, paints, electricals,
+                  furniture, optical (-> Health if "opticals / eye care"),
+                  xerox, photocopy, book depot   (stationery -> Education)
+   Health:        medical, medicals, medical store, pharma, pharmacy, chemist,
+                  druggist, clinic, hospital, nursing home, diagnostics,
+                  path lab, labs, dental, opticals, eye care, physio
+   Fitness:       gym, fitness, yoga, sports club, sports academy, turf
+   Personal Care: salon, saloon, beauty parlour, parlour, spa, barber, unisex
+   Bills:         electricity, water board, gas agency, broadband,
+                  cable tv, cable network, recharge, society, maintenance
+   Education:     school, college, academy, institute, coaching, tuition,
+                  classes, university, library
+
+E) Words NOT used on their own (too vague): traders, enterprises, services,
+   solutions, agency, corporation, industries, company, store, shop, mart, mall.
+   A payee like "SRI RAM ENTERPRISES" stays "Other" unless you've set it before.

@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+// Switches now live in AppPrefs (Settings → Notifications).
+// import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
+import 'package:vyaya_capture/vyaya_capture.dart';
 import 'app_prefs.dart';
 
 class NotificationService {
@@ -11,12 +13,12 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   static bool _isInitialized = false;
-  static SharedPreferences? _prefs;
+  // static SharedPreferences? _prefs;
 
   static Future<void> initialize() async {
     if (_isInitialized) return;
 
-    _prefs = await SharedPreferences.getInstance();
+    // _prefs = await SharedPreferences.getInstance();
 
     // Scheduled notifications (daily reminder) need a time zone. Vyaya is
     // India-only, so IST is fixed rather than detected.
@@ -44,18 +46,28 @@ class NotificationService {
         ?.requestNotificationsPermission();
   }
 
-  static Future<bool> areNotificationsEnabled() async {
-    return _prefs?.getBool('notifications_enabled') ?? true;
+  /// The master switch in Settings → Notifications.
+  static Future<bool> areNotificationsEnabled() async =>
+      AppPrefs.instance.notificationsOn;
+
+  /// Master switch: off clears everything scheduled; on puts back what the
+  /// individual switches allow.
+  static Future<void> setNotificationsEnabled(bool enabled) async {
+    await AppPrefs.instance.setNotificationsOn(enabled);
+    if (!enabled) await _notificationsPlugin.cancelAll();
+    await syncDailyReminder(AppPrefs.instance.reminderMinutes);
+    await onScheduledCleared?.call();
+    await syncDetectedNotifier();
   }
 
-  static Future<void> setNotificationsEnabled(bool enabled) async {
-    await _prefs?.setBool('notifications_enabled', enabled);
-    if (!enabled) {
-      await _notificationsPlugin.cancelAll();
-      // The daily reminder and scheduled summaries have their own
-      // switches; put them back.
-      await syncDailyReminder(AppPrefs.instance.reminderMinutes);
-      await onScheduledCleared?.call();
+  /// The native "New payment detected" notification follows its switch.
+  static Future<void> syncDetectedNotifier() async {
+    final p = AppPrefs.instance;
+    try {
+      await VyayaCapture.setNotifierEnabled(
+          p.notificationsOn && p.detectedPaymentNotifications);
+    } catch (e) {
+      debugPrint('Detected-payment notifier switch failed: $e');
     }
   }
 
@@ -104,12 +116,13 @@ class NotificationService {
   }
 
   /// Ids of notifications scheduled but not yet shown.
-  /// With App Lock on, notifications with amounts stay off the lock screen
-  /// (they still show once the phone is unlocked).
+  /// Notifications with amounts follow the phone's lock-screen setting
+  /// ("hide sensitive content" hides them); with App Lock on they stay off
+  /// the lock screen entirely.
   static NotificationVisibility get _lockScreenVisibility =>
       AppPrefs.instance.appLockEnabled
           ? NotificationVisibility.secret
-          : NotificationVisibility.public;
+          : NotificationVisibility.private;
 
   static Future<Set<int>> pendingIds() async {
     try {
@@ -121,8 +134,10 @@ class NotificationService {
   }
 
   /// Optional early warning: 80% of a limit or of this month's income.
-  static Future<void> showNearLimit(String title, String body) =>
-      _showNotification(title, body);
+  static Future<void> showNearLimit(String title, String body) async {
+    if (!AppPrefs.instance.notificationsOn) return;
+    await _showNotification(title, body);
+  }
 
   // ==================== DAILY REMINDER ====================
 
@@ -134,14 +149,18 @@ class NotificationService {
   /// Schedules (or cancels, when [minutes] is null) the daily "log your
   /// spending" reminder at [minutes] after midnight. Inexact, so Android
   /// may deliver it a few minutes late to save battery.
-  static Future<void> syncDailyReminder(int? minutes) async {
+  ///
+  /// [skipToday]: something was already logged today, so today's reminder
+  /// is skipped and it starts again tomorrow.
+  static Future<void> syncDailyReminder(int? minutes,
+      {bool skipToday = false}) async {
     try {
       await _notificationsPlugin.cancel(_reminderId);
-      if (minutes == null) return;
+      if (minutes == null || !AppPrefs.instance.notificationsOn) return;
       final now = tz.TZDateTime.now(tz.local);
       var at = tz.TZDateTime(
           tz.local, now.year, now.month, now.day, minutes ~/ 60, minutes % 60);
-      if (!at.isAfter(now)) at = at.add(const Duration(days: 1));
+      if (!at.isAfter(now) || skipToday) at = at.add(const Duration(days: 1));
       await _notificationsPlugin.zonedSchedule(
         _reminderId,
         'Log today\'s spending',
@@ -169,9 +188,11 @@ class NotificationService {
   /// Skipped when no income is logged yet (nothing to compare against).
   static Future<void> checkIncomeExceeded(
     double monthlySpent,
-    double monthlyIncome,
-  ) async {
-    if (!await areNotificationsEnabled()) return;
+    double monthlyIncome, {
+    bool test = false,
+  }) async {
+    final p = AppPrefs.instance;
+    if (!test && !(p.notificationsOn && p.incomeAlerts)) return;
     if (monthlyIncome <= 0) return;
 
     if (monthlySpent > monthlyIncome) {
@@ -186,6 +207,7 @@ class NotificationService {
 
   /// Optional feature: a single expense at or above your chosen amount.
   static Future<void> showLargePayment(String payee, double amount) async {
+    if (!AppPrefs.instance.notificationsOn) return;
     final id = 50000 + DateTime.now().millisecondsSinceEpoch % 40000;
     await _notificationsPlugin.show(
       id,
@@ -210,7 +232,8 @@ class NotificationService {
     double categorySpent,
     double categoryBudget,
   ) async {
-    if (!await areNotificationsEnabled()) return;
+    final p = AppPrefs.instance;
+    if (!(p.notificationsOn && p.categoryLimitAlerts)) return;
     if (categoryBudget <= 0) return;
 
     if (categorySpent >= categoryBudget) {

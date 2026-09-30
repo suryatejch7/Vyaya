@@ -8,6 +8,9 @@ import 'add_income_screen.dart';
 // import 'transaction_scanner_screen.dart';
 // import '../services/sharing_intent_service.dart';
 import '../services/intent_service.dart';
+import '../services/local_store.dart';
+import '../services/backup_service.dart';
+import '../services/smart_notifications.dart';
 import '../widgets/liquid_glass_nav_bar.dart';
 import '../widgets/expandable_fab.dart';
 import '../providers/expense_provider.dart';
@@ -66,7 +69,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   /// finished months into "Saved".
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Leaving the app: write any changes still waiting (saves are grouped
+    // for a moment) so nothing is lost if Android closes the app.
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      LocalStore.flush().then((_) => BackupService.flushPending());
+    }
     if (state == AppLifecycleState.resumed && mounted) {
+      // Re-plan summaries/reminders (the weekly one is scheduled a week at
+      // a time).
+      SmartNotifications.sync();
       context.read<ExpenseProvider>().runAutomations();
       // Pick up payments captured in the background + permission changes
       // made in system settings.
@@ -97,13 +111,21 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       body: Stack(
         children: [
           Container(color: Colors.black),
-          _screens[_currentIndex],
+          // Both tabs stay alive, so Home keeps its scroll position and
+          // doesn't rebuild (or replay its animations) on every switch.
+          // _screens[_currentIndex],
+          IndexedStack(index: _currentIndex, children: _screens),
           GlassNavBar(
             currentIndex: _currentIndex,
             onTap: (index) {
               if (index != _currentIndex) {
+                // Leaving Home ends a selection first; Home's selection
+                // state goes away with the tab.
+                if (_isSelectionMode) _clearSelection?.call();
                 setState(() {
                   _currentIndex = index;
+                  _isSelectionMode = false;
+                  _selectedCount = 0;
                 });
               }
             },

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -147,24 +148,35 @@ class _SearchScreenState extends State<SearchScreen> {
   // Kept from initState: context lookups aren't allowed inside dispose().
   late final ExpenseProvider _provider;
   _SearchFilters _filters = const _SearchFilters();
+  // The query is kept here (not in the provider) and applied 150 ms after
+  // typing pauses, so each key press doesn't rebuild the whole app.
+  String _query = '';
+  Timer? _debounce;
+  bool _showClear = false;
+
+  static String _normalize(String v) =>
+      v.trim().replaceAll(RegExp(r'\s+'), ' ');
 
   @override
   void initState() {
     super.initState();
     _provider = context.read<ExpenseProvider>();
     _controller.text = _provider.searchQuery;
+    _query = _normalize(_controller.text);
+    _showClear = _controller.text.isNotEmpty;
   }
 
   @override
   void dispose() {
     // Clear the query so it doesn't linger for the next search. No
     // notifyListeners here: the widget tree is locked during dispose.
+    _debounce?.cancel();
     _provider.clearSearch(notify: false);
     _controller.dispose();
     super.dispose();
   }
 
-  bool get _hasQuery => _controller.text.trim().isNotEmpty;
+  bool get _hasQuery => _query.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -207,19 +219,29 @@ class _SearchScreenState extends State<SearchScreen> {
       autofocus: true,
       style: const TextStyle(color: Colors.white),
       onChanged: (value) {
-        context.read<ExpenseProvider>().setSearchQuery(value);
-        setState(() {}); // shows / hides the clear button
+        // Rebuild only when the clear button appears / disappears; results
+        // update after the pause below.
+        if (value.isNotEmpty != _showClear) {
+          setState(() => _showClear = value.isNotEmpty);
+        }
+        _debounce?.cancel();
+        _debounce = Timer(const Duration(milliseconds: 150), () {
+          if (mounted) setState(() => _query = _normalize(value));
+        });
       },
       decoration: InputDecoration(
         hintText: 'Payee, amount, category…',
         prefixIcon: const Icon(Icons.search, color: Colors.grey),
-        suffixIcon: _controller.text.isNotEmpty
+        suffixIcon: _showClear
             ? IconButton(
                 icon: const Icon(Icons.clear, color: Colors.grey),
                 onPressed: () {
                   _controller.clear();
-                  context.read<ExpenseProvider>().setSearchQuery('');
-                  setState(() {});
+                  _debounce?.cancel();
+                  setState(() {
+                    _query = '';
+                    _showClear = false;
+                  });
                 },
               )
             : null,
@@ -362,7 +384,7 @@ class _SearchScreenState extends State<SearchScreen> {
     // No text: browse everything that matches the filters.
     final expenses = f.show == _SearchShow.income
         ? const <Expense>[]
-        : (_hasQuery ? provider.filteredExpenses : provider.expenses)
+        : (_hasQuery ? provider.searchExpenses(_query) : provider.expenses)
             .where((e) =>
                 (f.accountId == null || e.accountId == f.accountId) &&
                 (f.categories.isEmpty ||
@@ -373,7 +395,7 @@ class _SearchScreenState extends State<SearchScreen> {
     // Incomes have no category, so a category filter shows expenses only.
     final incomes = f.show == _SearchShow.expenses || f.categories.isNotEmpty
         ? const <Income>[]
-        : (_hasQuery ? provider.filteredIncomes : provider.incomes)
+        : (_hasQuery ? provider.searchIncomes(_query) : provider.incomes)
             .where((i) =>
                 (f.accountId == null || i.accountId == f.accountId) &&
                 f.matchesDate(i.date, now) &&

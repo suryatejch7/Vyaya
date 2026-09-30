@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/expense_models.dart';
@@ -19,10 +20,62 @@ class LocalStore {
   static const String _nextExpenseIdKey = 'ls_next_expense_id';
   static const String _nextIncomeIdKey = 'ls_next_income_id';
 
-  /// Must be called before any other method.
+  /// Must be called before any other method. Also drops the in-memory
+  /// copies, so data written straight to storage (restore) is re-read.
   static Future<void> initialize() async {
     _prefs ??= await SharedPreferences.getInstance();
+    discardPending();
     await _removeLegacyCacheKeys();
+  }
+
+  // ==================== WRITE-BEHIND CACHE ====================
+  // Expenses, incomes and the other lists are kept decoded in memory.
+  // A change updates memory at once and marks the list "dirty"; dirty lists
+  // are written together 300 ms after the last change (and whenever the app
+  // goes to the background). So "Add all" on 150 payments is one write,
+  // not 150, and nothing is decoded again on every save.
+
+  static final Map<String, List<Map<String, dynamic>>> _lists = {};
+  static final Set<String> _dirty = {};
+  static Timer? _flushTimer;
+
+  static List<Map<String, dynamic>> _list(String key) =>
+      _lists.putIfAbsent(key, () {
+        final json = _p.getString(key);
+        if (json == null) return <Map<String, dynamic>>[];
+        return List<Map<String, dynamic>>.from(
+          (jsonDecode(json) as List).map((e) => Map<String, dynamic>.from(e)),
+        );
+      });
+
+  static void _markDirty(String key) {
+    _dirty.add(key);
+    _flushTimer?.cancel();
+    _flushTimer = Timer(const Duration(milliseconds: 300), flush);
+    BackupService.autoSave();
+  }
+
+  /// Writes every changed list now. Called before reading storage directly
+  /// (backups) and when the app goes to the background.
+  static Future<void> flush() async {
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    if (_prefs == null || _dirty.isEmpty) return;
+    final keys = _dirty.toList();
+    _dirty.clear();
+    for (final key in keys) {
+      final list = _lists[key];
+      if (list != null) await _p.setString(key, jsonEncode(list));
+    }
+  }
+
+  /// Forgets unwritten changes and cached lists (restore / reset replace
+  /// the stored data underneath).
+  static void discardPending() {
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _dirty.clear();
+    _lists.clear();
   }
 
   /// The old online version kept an offline copy of the server's expenses
@@ -189,8 +242,7 @@ class LocalStore {
     data['id'] = id;
     data['user_id'] = userId;
     expenses.add(data);
-    await _p.setString('$_expensesPrefix$userId', jsonEncode(expenses));
-    BackupService.autoSave();
+    _markDirty('$_expensesPrefix$userId');
     return id;
   }
 
@@ -207,8 +259,7 @@ class LocalStore {
         break;
       }
     }
-    await _p.setString('$_expensesPrefix$userId', jsonEncode(expenses));
-    BackupService.autoSave();
+    _markDirty('$_expensesPrefix$userId');
   }
 
   /// Counts expenses per category name across ALL stored expenses.
@@ -238,10 +289,7 @@ class LocalStore {
         changed++;
       }
     }
-    if (changed > 0) {
-      await _p.setString('$_expensesPrefix$userId', jsonEncode(expenses));
-      BackupService.autoSave();
-    }
+    if (changed > 0) _markDirty('$_expensesPrefix$userId');
     return changed;
   }
 
@@ -264,19 +312,17 @@ class LocalStore {
         }
       }
       if (n > 0) {
-        await _p.setString('$prefix$userId', jsonEncode(rows));
+        _markDirty('$prefix$userId');
         changed += n;
       }
     }
-    if (changed > 0) BackupService.autoSave();
     return changed;
   }
 
   static Future<void> deleteExpense(String expenseId, int userId) async {
     final expenses = _loadExpensesRaw(userId);
     expenses.removeWhere((e) => e['id'].toString() == expenseId);
-    await _p.setString('$_expensesPrefix$userId', jsonEncode(expenses));
-    BackupService.autoSave();
+    _markDirty('$_expensesPrefix$userId');
   }
 
   static Future<List<Expense>> getExpenses({
@@ -311,8 +357,7 @@ class LocalStore {
     data['id'] = id;
     data['user_id'] = userId;
     incomes.add(data);
-    await _p.setString('$_incomesPrefix$userId', jsonEncode(incomes));
-    BackupService.autoSave();
+    _markDirty('$_incomesPrefix$userId');
     return id;
   }
 
@@ -326,15 +371,13 @@ class LocalStore {
         break;
       }
     }
-    await _p.setString('$_incomesPrefix$userId', jsonEncode(incomes));
-    BackupService.autoSave();
+    _markDirty('$_incomesPrefix$userId');
   }
 
   static Future<void> deleteIncome(String incomeId, int userId) async {
     final incomes = _loadIncomesRaw(userId);
     incomes.removeWhere((i) => i['id'].toString() == incomeId);
-    await _p.setString('$_incomesPrefix$userId', jsonEncode(incomes));
-    BackupService.autoSave();
+    _markDirty('$_incomesPrefix$userId');
   }
 
   static Future<List<Income>> getIncomes({required int userId}) async {
@@ -350,18 +393,15 @@ class LocalStore {
 
   static Future<List<Map<String, dynamic>>> getJsonList(String name,
       {required int userId}) async {
-    final json = _p.getString('ls_${name}_$userId');
-    if (json == null) return [];
-    return List<Map<String, dynamic>>.from(
-      (jsonDecode(json) as List).map((e) => Map<String, dynamic>.from(e)),
-    );
+    return [for (final m in _list('ls_${name}_$userId')) Map.of(m)];
   }
 
   static Future<void> saveJsonList(
       String name, List<Map<String, dynamic>> items,
       {required int userId}) async {
-    await _p.setString('ls_${name}_$userId', jsonEncode(items));
-    BackupService.autoSave();
+    final key = 'ls_${name}_$userId';
+    _lists[key] = List.of(items);
+    _markDirty(key);
   }
 
   static String? getMeta(String name, {required int userId}) =>
@@ -369,6 +409,7 @@ class LocalStore {
 
   static Future<void> setMeta(String name, String value,
       {required int userId}) async {
+    await flush(); // keep writes in order with pending list changes
     await _p.setString('ls_${name}_$userId', value);
     BackupService.autoSave();
   }
@@ -377,6 +418,7 @@ class LocalStore {
 
   /// Clears ALL app data from local storage.
   static Future<void> resetAllData() async {
+    discardPending();
     await _p.clear();
     // Re-initialize prefs reference after clear
     _prefs = await SharedPreferences.getInstance();
@@ -384,6 +426,7 @@ class LocalStore {
 
   /// Clears data for a specific user only.
   static Future<void> resetUserData(int userId) async {
+    discardPending();
     await _p.remove('$_expensesPrefix$userId');
     await _p.remove('$_incomesPrefix$userId');
     await _p.remove('$_settingsPrefix$userId');
@@ -407,6 +450,7 @@ class LocalStore {
 
   static Future<void> _saveSettings(
       int userId, models.UserSettings settings) async {
+    await flush(); // keep writes in order with pending list changes
     await _p.setString(
       '$_settingsPrefix$userId',
       jsonEncode(settings.toJson()),
@@ -414,19 +458,11 @@ class LocalStore {
     BackupService.autoSave();
   }
 
-  static List<Map<String, dynamic>> _loadExpensesRaw(int userId) {
-    final json = _p.getString('$_expensesPrefix$userId');
-    if (json == null) return [];
-    return List<Map<String, dynamic>>.from(
-      (jsonDecode(json) as List).map((e) => Map<String, dynamic>.from(e)),
-    );
-  }
+  // The cached (live) lists: changes to them must be followed by
+  // _markDirty so they get written.
+  static List<Map<String, dynamic>> _loadExpensesRaw(int userId) =>
+      _list('$_expensesPrefix$userId');
 
-  static List<Map<String, dynamic>> _loadIncomesRaw(int userId) {
-    final json = _p.getString('$_incomesPrefix$userId');
-    if (json == null) return [];
-    return List<Map<String, dynamic>>.from(
-      (jsonDecode(json) as List).map((e) => Map<String, dynamic>.from(e)),
-    );
-  }
+  static List<Map<String, dynamic>> _loadIncomesRaw(int userId) =>
+      _list('$_incomesPrefix$userId');
 }

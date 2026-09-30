@@ -37,9 +37,42 @@ class SmartNotifications {
   static void attach(ExpenseProvider provider) {
     if (_provider != null) return;
     _provider = provider;
-    provider.addListener(_scheduleSoon);
+    provider.addListener(_onDataChanged);
     AppPrefs.instance.addListener(_scheduleSoon);
     NotificationService.onScheduledCleared = sync;
+    _scheduleSoon();
+  }
+
+  static int? _lastSignature;
+
+  /// The provider also notifies for things that don't change what these
+  /// notifications say (switching month on Home, loading states), so they
+  /// are only re-scheduled when the data itself changed.
+  static void _onDataChanged() {
+    final p = _provider;
+    if (p == null) return;
+    final now = DateTime.now();
+    var h = Object.hash(
+        p.expenses.length,
+        p.incomes.length,
+        p.recurringEntries.length,
+        p.monthEndSavingsEnabled,
+        now.year,
+        now.month,
+        now.day, // a new day re-plans even with no new entries
+        Object.hashAll(p.categories.map((c) => c.name)));
+    for (final e in p.expenses) {
+      h = Object.hash(h, e.amount, e.date, e.category);
+    }
+    for (final i in p.incomes) {
+      h = Object.hash(h, i.amount, i.date);
+    }
+    for (final r in p.recurringEntries) {
+      h = Object.hash(
+          h, r.amount, r.nextDue, r.active, r.title, r.type, r.category);
+    }
+    if (h == _lastSignature) return;
+    _lastSignature = h;
     _scheduleSoon();
   }
 
@@ -58,12 +91,43 @@ class SmartNotifications {
     if (p == null || p.userId == 0) return;
     try {
       final pending = await NotificationService.pendingIds();
+      if (!AppPrefs.instance.notificationsOn) {
+        // Master switch off: nothing from here stays scheduled.
+        for (final id in [
+          _weeklyId,
+          _weeklyFallbackId,
+          _monthlyId,
+          _monthlyFallbackId,
+          for (var i = 0; i < _billMax; i++) _billBase + i,
+        ]) {
+          await _cancelPending(id, pending);
+        }
+        return;
+      }
       await _syncWeekly(p, pending);
       await _syncMonthly(p, pending);
       await _syncBills(p, pending);
+      // Daily reminder: skipped for today once something was logged today.
+      await NotificationService.syncDailyReminder(
+          AppPrefs.instance.reminderMinutes,
+          skipToday: loggedToday(p.expenses, p.incomes, DateTime.now()));
     } catch (e) {
       debugPrint('Smart notifications sync failed: $e');
     }
+  }
+
+  /// True when you added an expense or income yourself today (automatic
+  /// Saved / recurring entries don't count).
+  @visibleForTesting
+  static bool loggedToday(
+      List<Expense> expenses, List<Income> incomes, DateTime now) {
+    bool today(DateTime d) =>
+        d.year == now.year && d.month == now.month && d.day == now.day;
+    return expenses.any((e) =>
+            today(e.createdAt) &&
+            e.paymentApp != 'Recurring' &&
+            !ExpenseProvider.isAutoSavedEntry(e)) ||
+        incomes.any((i) => today(i.createdAt) && i.tag == null);
   }
 
   // ---------------------------------------------------------------- weekly
@@ -140,7 +204,13 @@ class SmartNotifications {
     final (title, body) = weeklyText(p.expenses, at, p.categoryBucket);
     await NotificationService.scheduleAt(_weeklyId, title, body, at,
         channelId: 'weekly_summary', channelName: 'Weekly summary');
-    // If the app isn't opened for a while, a plain weekly nudge still comes.
+    // Optional: if the app isn't opened for a while, a plain weekly nudge
+    // still comes (Settings → Notifications → "Nudge me if I haven't opened
+    // Vyaya").
+    if (!AppPrefs.instance.inactivityNudges) {
+      await _cancelPending(_weeklyFallbackId, pending);
+      return;
+    }
     await NotificationService.scheduleAt(
       _weeklyFallbackId,
       'Your week in Vyaya',
@@ -192,6 +262,10 @@ class SmartNotifications {
     await NotificationService.scheduleAt(
         _monthlyId, '$month recap', body, at,
         channelId: 'monthly_recap', channelName: 'Monthly recap');
+    if (!AppPrefs.instance.inactivityNudges) {
+      await _cancelPending(_monthlyFallbackId, pending);
+      return;
+    }
     await NotificationService.scheduleAt(
       _monthlyFallbackId,
       'Your monthly recap',

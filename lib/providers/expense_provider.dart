@@ -155,8 +155,37 @@ class ExpenseProvider extends ChangeNotifier {
     }).toList();
   }
 
+  /// Expenses matching [query] (already trimmed). Doesn't store anything
+  /// or notify, so typing in Search doesn't rebuild the rest of the app.
+  List<Expense> searchExpenses(String query) {
+    final q = query.toLowerCase();
+    if (q.isEmpty) return _expenseManager.expenses;
+    return _expenseManager.expenses.where((expense) {
+      return expense.description.toLowerCase().contains(q) ||
+          (expense.payee?.toLowerCase().contains(q) ?? false) ||
+          expense.amount.toString().contains(q) ||
+          expense.amount.toStringAsFixed(0).contains(q) ||
+          (expense.notes?.toLowerCase().contains(q) ?? false) ||
+          expense.category.toLowerCase().contains(q);
+    }).toList();
+  }
+
+  List<Income> searchIncomes(String query) {
+    final q = query.toLowerCase();
+    if (q.isEmpty) return _incomeManager.incomes;
+    return _incomeManager.incomes.where((income) {
+      return income.title.toLowerCase().contains(q) ||
+          income.source.toLowerCase().contains(q) ||
+          income.amount.toString().contains(q) ||
+          income.amount.toStringAsFixed(0).contains(q) ||
+          (income.notes?.toLowerCase().contains(q) ?? false);
+    }).toList();
+  }
+
   void setSearchQuery(String query) {
-    _searchQuery = query;
+    // Keyboards add a space after a tapped suggestion ("swiggy "), which
+    // matched nothing; extra spaces are ignored.
+    _searchQuery = query.trim().replaceAll(RegExp(r'\s+'), ' ');
     notifyListeners();
   }
 
@@ -328,9 +357,22 @@ class ExpenseProvider extends ChangeNotifier {
     try {
       _isLoading = true;
       notifyListeners();
+      Expense? old;
+      for (final e in _expenseManager.expenses) {
+        if (e.id == expense.id) old = e;
+      }
       await _expenseManager.updateExpense(expense, _userId);
       await _resyncSavings();
       _refreshCalculations();
+      // Limit alerts for what the edit added: the difference if it stayed
+      // in the same category and month, else the whole amount (it's new
+      // to that category / month).
+      final sameBucket = old != null &&
+          old.category == expense.category &&
+          old.date.year == expense.date.year &&
+          old.date.month == expense.date.month;
+      await _limitAlerts(expense,
+          increase: sameBucket ? expense.amount - old.amount : expense.amount);
     } catch (e) {
       throw Exception('Failed to update expense: $e');
     } finally {
@@ -398,6 +440,43 @@ class ExpenseProvider extends ChangeNotifier {
       _refreshCalculations();
     } catch (e) {
       throw Exception('Failed to update income: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Deletes several entries at once (multi-select): one savings re-check
+  /// and one refresh at the end instead of one per entry.
+  Future<void> deleteMany(
+      {List<String> expenseIds = const [],
+      List<String> incomeIds = const []}) async {
+    if (expenseIds.isEmpty && incomeIds.isEmpty) return;
+    try {
+      _isLoading = true;
+      notifyListeners();
+      final skipped = _skippedSavingsMonths;
+      final skippedBefore = skipped.length;
+      for (final id in expenseIds) {
+        final target =
+            _expenseManager.expenses.where((e) => e.id == id).firstOrNull;
+        final month = target == null ? null : _savedMonthOf(target);
+        if (month != null) skipped.add(month);
+        await _expenseManager.deleteExpense(id, _userId);
+      }
+      for (final id in incomeIds) {
+        final target =
+            _incomeManager.incomes.where((i) => i.id == id).firstOrNull;
+        final month = target == null ? null : _carryMonthOf(target);
+        if (month != null) skipped.add(month);
+        await _incomeManager.deleteIncome(id, _userId);
+      }
+      if (skipped.length != skippedBefore) {
+        await _setSkippedSavingsMonths(skipped);
+      }
+      await _resyncSavings();
+    } catch (e) {
+      throw Exception('Failed to delete entries: $e');
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -517,8 +596,16 @@ class ExpenseProvider extends ChangeNotifier {
     final idx = _customCategories.indexWhere((c) => c.id == id);
     if (idx == -1) return;
     final old = _customCategories[idx];
-    final newName = name.trim();
+    var newName = name.trim();
     if (newName.isEmpty) throw ArgumentError('Name can\'t be empty');
+    // "Saved" is found by its name when month-end savings run, so its name
+    // stays fixed (icon and colour can still change), and no other
+    // category can take that name.
+    if (old.name == savedCategoryName) newName = savedCategoryName;
+    if (old.name != savedCategoryName &&
+        newName.toLowerCase() == savedCategoryName.toLowerCase()) {
+      throw ArgumentError('"$savedCategoryName" is used for month-end savings');
+    }
     if (newName.toLowerCase() != old.name.toLowerCase() &&
         _customCategories.any((c) =>
             c.id != id && c.name.toLowerCase() == newName.toLowerCase())) {
@@ -560,6 +647,10 @@ class ExpenseProvider extends ChangeNotifier {
   }
 
   Future<void> removeCustomCategory(String categoryId) async {
+    if (_customCategories
+        .any((c) => c.id == categoryId && c.name == savedCategoryName)) {
+      return; // month-end savings would just recreate it
+    }
     try {
       _customCategories.removeWhere((cat) => cat.id == categoryId);
       await LocalStore.saveCustomCategories(_customCategories,
@@ -600,6 +691,11 @@ class ExpenseProvider extends ChangeNotifier {
   /// expenses are moved before the categories are removed.
   Future<void> removeCustomCategories(Set<String> categoryIds,
       {Map<String, String> reassign = const {}}) async {
+    // "Saved" stays: month-end savings would just recreate it.
+    categoryIds = categoryIds
+        .where((id) => !_customCategories
+            .any((c) => c.id == id && c.name == savedCategoryName))
+        .toSet();
     if (categoryIds.isEmpty) return;
     final snapshot = List<ExpenseCategory>.from(_customCategories);
     try {
@@ -852,6 +948,20 @@ class ExpenseProvider extends ChangeNotifier {
     if (changed) await _saveRecurring();
   }
 
+  /// Income / category-limit alerts (and 80% warnings) for an expense that
+  /// was edited or added automatically.
+  Future<void> _limitAlerts(Expense expense, {required double increase}) =>
+      _notificationManager.triggerExpenseNotifications(
+        expense: expense,
+        allExpenses: _expenseManager.expenses,
+        monthlyIncome: totalIncomeThisMonth,
+        categoryBudget: getCategoryBudget(expense.category),
+        categorySpent: getCategoryExpenses(expense.category),
+        isFirstExpense: false,
+        increase: increase,
+        checkLargePayment: false,
+      );
+
   Future<void> _createFromRecurring(RecurringEntry r, DateTime due) async {
     final now = DateTime.now();
     final accountId = r.accountId ?? defaultAccount?.id;
@@ -864,26 +974,28 @@ class ExpenseProvider extends ChangeNotifier {
           date: due,
           notes: r.notes,
           accountId: accountId,
+          // Marks it as automatic (e.g. the daily reminder ignores it).
+          tag: 'recurring-${r.id}',
           createdAt: now,
           updatedAt: now,
         ),
         _userId,
       );
     } else {
-      await _expenseManager.addExpense(
-        Expense(
-          amount: r.amount,
-          description: r.title,
-          category: r.category,
-          date: due,
-          paymentApp: 'Recurring',
-          notes: r.notes,
-          accountId: accountId,
-          createdAt: now,
-          updatedAt: now,
-        ),
-        _userId,
+      final expense = Expense(
+        amount: r.amount,
+        description: r.title,
+        category: r.category,
+        date: due,
+        paymentApp: 'Recurring',
+        notes: r.notes,
+        accountId: accountId,
+        createdAt: now,
+        updatedAt: now,
       );
+      await _expenseManager.addExpense(expense, _userId);
+      // A rent that pushes Bills over its limit warns like a manual one.
+      await _limitAlerts(expense, increase: r.amount);
     }
   }
 
@@ -945,7 +1057,8 @@ class ExpenseProvider extends ChangeNotifier {
 
   /// Switches between saving the leftover and carrying it forward. The
   /// new choice applies from this month on (the first month it closes);
-  /// entries already made for earlier months are left as they are.
+  /// earlier months keep the kind of entry they got, though its amount
+  /// still follows late edits (see [_refreshMonthsBefore]).
   Future<void> setMonthEndSavings(bool on) async {
     final now = DateTime.now();
     await LocalStore.setMeta('month_end_mode', on ? 'save' : 'carry',
@@ -1006,16 +1119,72 @@ class ExpenseProvider extends ChangeNotifier {
         if (skipped.contains(_monthKey(m))) continue; // you deleted it
         await _reconcileSavingsFor(m);
       }
+      // Months closed before the last switch keep the entry they got, but
+      // its amount still follows late edits (a back-dated expense).
+      await _refreshMonthsBefore(from);
     } finally {
       _savingsRunning = false;
     }
   }
 
-  Future<void> _reconcileSavingsFor(DateTime m) async {
+  /// For months before [from]: updates an existing Saved entry or
+  /// carried-over income to the month's current leftover. Never creates
+  /// one or switches its type, so the mode each month closed under stays.
+  Future<void> _refreshMonthsBefore(DateTime from) async {
+    final fromKey = _monthKey(from);
+    // Remember how each earlier month closed ("save" / "carry"), so its
+    // entry can come back if it was removed while the month had nothing
+    // left (e.g. a mistaken back-dated expense that was then undone).
+    final modes = _closedMonthModes();
+    var changed = false;
+    for (final e in _expenseManager.expenses) {
+      final k = _savedMonthOf(e);
+      if (k != null && !modes.containsKey(k)) {
+        modes[k] = 'save';
+        changed = true;
+      }
+    }
+    for (final i in _incomeManager.incomes) {
+      final tag = i.tag ?? '';
+      if (!tag.startsWith(_autoCarryPrefix)) continue;
+      final k = tag.substring(_autoCarryPrefix.length);
+      if (!modes.containsKey(k)) {
+        modes[k] = 'carry';
+        changed = true;
+      }
+    }
+    if (changed) {
+      await LocalStore.setMeta('closed_modes',
+          modes.entries.map((e) => '${e.key}=${e.value}').join(','),
+          userId: _userId);
+    }
+    final skipped = _skippedSavingsMonths;
+    for (final e in modes.entries) {
+      if (e.key.compareTo(fromKey) >= 0) continue;
+      final m = _parseMonthKey(e.key);
+      if (m == null) continue;
+      final save = e.value == 'save';
+      if (save && skipped.contains(e.key)) continue; // you deleted it
+      await _reconcileSavingsFor(m, saveMode: save);
+    }
+  }
+
+  /// Month key -> "save" / "carry" for months closed before a mode switch.
+  Map<String, String> _closedMonthModes() {
+    final raw = LocalStore.getMeta('closed_modes', userId: _userId) ?? '';
+    return {
+      for (final part in raw.split(','))
+        if (part.contains('=')) part.split('=')[0]: part.split('=')[1],
+    };
+  }
+
+  /// [saveMode] defaults to the current setting; earlier months pass the
+  /// mode they closed under.
+  Future<void> _reconcileSavingsFor(DateTime m, {bool? saveMode}) async {
     final now = DateTime.now();
     final tag = '$_autoSavedPrefix${_monthKey(m)}';
     final carryTag = '$_autoCarryPrefix${_monthKey(m)}';
-    final saveMode = monthEndSavingsEnabled;
+    saveMode ??= monthEndSavingsEnabled;
     bool inMonth(DateTime d) => d.year == m.year && d.month == m.month;
 
     final income = _incomeManager.incomes
@@ -1260,6 +1429,12 @@ class ExpenseProvider extends ChangeNotifier {
   Future<void> updateDebt(DebtEntry entry) async {
     final i = _debts.indexWhere((d) => d.id == entry.id);
     if (i == -1) return;
+    final old = _debts[i];
+    // A settled entry's recorded income/expense follows amount / name edits.
+    if (entry.settled &&
+        (old.amount != entry.amount || old.person != entry.person)) {
+      await _updateSettlement(entry);
+    }
     _debts[i] = entry;
     await _saveDebts();
     notifyListeners();
@@ -1285,7 +1460,7 @@ class ExpenseProvider extends ChangeNotifier {
       _debts[i] = d.copyWith(
           settled: true, settledAt: DateTime.now(), settlementEntryId: entryId);
     } else {
-      final entry = d.settlementEntryId;
+      final entry = _settlementId(d);
       if (entry != null) {
         try {
           if (d.isLent) {
@@ -1304,12 +1479,55 @@ class ExpenseProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Logs a settlement and returns the new income/expense id.
+  /// Current id of a settled debt's recorded income/expense. It's linked by
+  /// a tag that survives delete + undo (which gives the entry a new id);
+  /// older entries saved the id itself, which is still checked.
+  String? _settlementId(DebtEntry d) {
+    final key = d.settlementEntryId;
+    if (key == null) return null;
+    if (d.isLent) {
+      for (final inc in _incomeManager.incomes) {
+        if (inc.tag == key || inc.id == key) return inc.id;
+      }
+    } else {
+      for (final e in _expenseManager.expenses) {
+        if (e.transactionId == key || e.id == key) return e.id;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _updateSettlement(DebtEntry d) async {
+    final id = _settlementId(d);
+    if (id == null) return;
+    final now = DateTime.now();
+    if (d.isLent) {
+      for (final inc in _incomeManager.incomes.where((i) => i.id == id)) {
+        await updateIncome(inc.copyWith(
+            amount: d.amount,
+            title: 'Repaid by ${d.person}',
+            source: d.person,
+            updatedAt: now));
+        return;
+      }
+    } else {
+      for (final e in _expenseManager.expenses.where((e) => e.id == id)) {
+        await updateExpense(e.copyWith(
+            amount: d.amount,
+            description: 'Repaid ${d.person}',
+            updatedAt: now));
+        return;
+      }
+    }
+  }
+
+  /// Logs a settlement and returns the tag that links it to the debt.
   Future<String?> _recordSettlement(DebtEntry d) async {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day, now.hour, now.minute);
     final note = 'Settled from Lent & Borrowed'
         '${d.note == null || d.note!.isEmpty ? '' : ' · ${d.note}'}';
+    final tag = 'debt-${d.id}-${now.millisecondsSinceEpoch}';
     if (d.isLent) {
       await addIncome(Income(
         amount: d.amount,
@@ -1318,17 +1536,12 @@ class ExpenseProvider extends ChangeNotifier {
         date: today,
         notes: note,
         accountId: defaultAccount?.id,
+        tag: tag,
         createdAt: now,
         updatedAt: now,
       ));
-      for (final inc in _incomeManager.incomes) {
-        if (inc.createdAt == now && (inc.amount - d.amount).abs() < 0.009) {
-          return inc.id;
-        }
-      }
-      return null;
+      return _incomeManager.incomes.any((i) => i.tag == tag) ? tag : null;
     }
-    final tag = 'debt-${d.id}-${now.millisecondsSinceEpoch}';
     await addExpense(Expense(
       amount: d.amount,
       description: 'Repaid ${d.person}',
@@ -1341,10 +1554,9 @@ class ExpenseProvider extends ChangeNotifier {
       createdAt: now,
       updatedAt: now,
     ));
-    for (final e in _expenseManager.expenses) {
-      if (e.transactionId == tag) return e.id;
-    }
-    return null;
+    return _expenseManager.expenses.any((e) => e.transactionId == tag)
+        ? tag
+        : null;
   }
 
   /// Open (unsettled) balance per person: + they owe you, - you owe them.
