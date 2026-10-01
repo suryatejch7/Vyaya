@@ -13,12 +13,17 @@ class NotificationManager {
     // How much this change added (an edit from ₹500 to ₹5,000 adds 4,500).
     // Defaults to the whole amount, for a new expense.
     double? increase,
+    // What it added to this month's total, when that differs from
+    // [increase] (moving an expense to another category adds to that
+    // category but nothing to the month).
+    double? monthIncrease,
     // Large-payment alert only for payments you just made, not edits or
     // recurring entries.
     bool checkLargePayment = true,
   }) async {
     final added = increase ?? expense.amount;
-    if (added <= 0) return;
+    final monthAdded = monthIncrease ?? added;
+    if (added <= 0 && monthAdded <= 0) return;
     try {
       // Optional large-payment alert: only for fresh payments (logged
       // today), not back-dated entries or imported history.
@@ -48,7 +53,7 @@ class NotificationManager {
       );
       // Alert only for the expense that crosses the line, not for every
       // expense after it (e.g. "Add all" on several detected payments).
-      if (_crossed(monthlySpent, added, monthlyIncome)) {
+      if (_crossed(monthlySpent, monthAdded, monthlyIncome)) {
         await NotificationService.checkIncomeExceeded(
           monthlySpent,
           monthlyIncome,
@@ -60,7 +65,7 @@ class NotificationManager {
           AppPrefs.instance.notificationsOn) {
         if (monthlyIncome > 0 &&
             monthlySpent <= monthlyIncome &&
-            _crossed(monthlySpent, added, monthlyIncome * 0.8)) {
+            _crossed(monthlySpent, monthAdded, monthlyIncome * 0.8)) {
           await NotificationService.showNearLimit(
             '80% of this month\'s income spent',
             '₹${(monthlyIncome - monthlySpent).toStringAsFixed(0)} left for the rest of the month.',

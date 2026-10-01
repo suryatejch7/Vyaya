@@ -367,12 +367,16 @@ class ExpenseProvider extends ChangeNotifier {
       // Limit alerts for what the edit added: the difference if it stayed
       // in the same category and month, else the whole amount (it's new
       // to that category / month).
-      final sameBucket = old != null &&
-          old.category == expense.category &&
+      final sameMonth = old != null &&
           old.date.year == expense.date.year &&
           old.date.month == expense.date.month;
+      final sameBucket = sameMonth && old.category == expense.category;
+      final change = old == null ? expense.amount : expense.amount - old.amount;
       await _limitAlerts(expense,
-          increase: sameBucket ? expense.amount - old.amount : expense.amount);
+          increase: sameBucket ? change : expense.amount,
+          // Only a real change in amount (or a move into this month) adds
+          // to the month; a category change alone doesn't.
+          monthIncrease: sameMonth ? change : expense.amount);
     } catch (e) {
       throw Exception('Failed to update expense: $e');
     } finally {
@@ -950,7 +954,8 @@ class ExpenseProvider extends ChangeNotifier {
 
   /// Income / category-limit alerts (and 80% warnings) for an expense that
   /// was edited or added automatically.
-  Future<void> _limitAlerts(Expense expense, {required double increase}) =>
+  Future<void> _limitAlerts(Expense expense,
+          {required double increase, double? monthIncrease}) =>
       _notificationManager.triggerExpenseNotifications(
         expense: expense,
         allExpenses: _expenseManager.expenses,
@@ -959,6 +964,7 @@ class ExpenseProvider extends ChangeNotifier {
         categorySpent: getCategoryExpenses(expense.category),
         isFirstExpense: false,
         increase: increase,
+        monthIncrease: monthIncrease,
         checkLargePayment: false,
       );
 
@@ -1061,10 +1067,27 @@ class ExpenseProvider extends ChangeNotifier {
   /// still follows late edits (see [_refreshMonthsBefore]).
   Future<void> setMonthEndSavings(bool on) async {
     final now = DateTime.now();
-    await LocalStore.setMeta('month_end_mode', on ? 'save' : 'carry',
+    final thisMonth = DateTime(now.year, now.month);
+    // Record how every month closed so far was handled (old mode), so they
+    // keep following late edits after the switch, including months that
+    // ended with nothing left and so have no entry yet.
+    final oldMode = monthEndSavingsEnabled ? 'save' : 'carry';
+    final oldFrom = _parseMonthKey(
+        LocalStore.getMeta('savings_from', userId: _userId) ?? '');
+    if (oldFrom != null) {
+      final modes = _closedMonthModes();
+      for (var m = oldFrom;
+          m.isBefore(thisMonth);
+          m = DateTime(m.year, m.month + 1)) {
+        modes.putIfAbsent(_monthKey(m), () => oldMode);
+      }
+      await _saveClosedMonthModes(modes);
+    }
+    // Order matters: a savings check running in between must never see the
+    // new mode with the old start month.
+    await LocalStore.setMeta('savings_from', _monthKey(thisMonth),
         userId: _userId);
-    await LocalStore.setMeta(
-        'savings_from', _monthKey(DateTime(now.year, now.month)),
+    await LocalStore.setMeta('month_end_mode', on ? 'save' : 'carry',
         userId: _userId);
     notifyListeners();
   }
@@ -1075,9 +1098,28 @@ class ExpenseProvider extends ChangeNotifier {
   /// reflected automatically. Months before this feature started are left
   /// alone (no back-filling).
   Future<void> _processMonthEndSavings() async {
-    if (_userId == 0 || _savingsRunning) return;
+    if (_userId == 0) return;
+    if (_savingsRunning) {
+      // A change arrived mid-run: run once more when this one ends, instead
+      // of dropping it (Saved / carried-over would stay out of date).
+      _savingsAgain = true;
+      return;
+    }
     _savingsRunning = true;
     try {
+      do {
+        _savingsAgain = false;
+        await _savingsPass();
+      } while (_savingsAgain);
+    } finally {
+      _savingsRunning = false;
+    }
+  }
+
+  bool _savingsAgain = false;
+
+  Future<void> _savingsPass() async {
+    {
       final now = DateTime.now();
       final thisMonth = DateTime(now.year, now.month);
 
@@ -1112,6 +1154,11 @@ class ExpenseProvider extends ChangeNotifier {
 
       final from = _parseMonthKey(fromKey);
       if (from == null) return;
+      // Months closed before the last switch first (oldest first): a
+      // carried-over amount feeds the next month's income, so the chain must
+      // be updated in date order. Their entry keeps its kind, but its amount
+      // still follows late edits (a back-dated expense).
+      await _refreshMonthsBefore(from);
       final skipped = _skippedSavingsMonths;
       for (var m = from;
           m.isBefore(thisMonth);
@@ -1119,11 +1166,6 @@ class ExpenseProvider extends ChangeNotifier {
         if (skipped.contains(_monthKey(m))) continue; // you deleted it
         await _reconcileSavingsFor(m);
       }
-      // Months closed before the last switch keep the entry they got, but
-      // its amount still follows late edits (a back-dated expense).
-      await _refreshMonthsBefore(from);
-    } finally {
-      _savingsRunning = false;
     }
   }
 
@@ -1153,13 +1195,11 @@ class ExpenseProvider extends ChangeNotifier {
         changed = true;
       }
     }
-    if (changed) {
-      await LocalStore.setMeta('closed_modes',
-          modes.entries.map((e) => '${e.key}=${e.value}').join(','),
-          userId: _userId);
-    }
+    if (changed) await _saveClosedMonthModes(modes);
     final skipped = _skippedSavingsMonths;
-    for (final e in modes.entries) {
+    final ordered = modes.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key)); // oldest first
+    for (final e in ordered) {
       if (e.key.compareTo(fromKey) >= 0) continue;
       final m = _parseMonthKey(e.key);
       if (m == null) continue;
@@ -1170,6 +1210,11 @@ class ExpenseProvider extends ChangeNotifier {
       await _reconcileSavingsFor(m, saveMode: e.value == 'save');
     }
   }
+
+  Future<void> _saveClosedMonthModes(Map<String, String> modes) =>
+      LocalStore.setMeta('closed_modes',
+          modes.entries.map((e) => '${e.key}=${e.value}').join(','),
+          userId: _userId);
 
   /// Month key -> "save" / "carry" for months closed before a mode switch.
   Map<String, String> _closedMonthModes() {

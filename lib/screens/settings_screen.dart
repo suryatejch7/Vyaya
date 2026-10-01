@@ -1258,6 +1258,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   setState(() => nameError = 'You already have "$newName"');
                   return;
                 }
+                if (newName.toLowerCase() ==
+                    ExpenseProvider.savedCategoryName.toLowerCase()) {
+                  setState(() =>
+                      nameError = '"Saved" is used for month-end savings');
+                  return;
+                }
                 {
                   setState(() {
                     _isAddingCategory = true;
@@ -1437,8 +1443,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Map<String, String> reassign = const {};
     if (counts.isNotEmpty) {
       final targetIds = targets.map((c) => c.id).toSet();
+      // "Saved" only holds month-end savings: not a place to move spending.
       final remaining = provider.customCategories
-          .where((c) => !targetIds.contains(c.id))
+          .where((c) =>
+              !targetIds.contains(c.id) &&
+              c.name != ExpenseProvider.savedCategoryName)
           .toList();
       final affected = targets.where((c) => counts.containsKey(c.name)).toList();
 

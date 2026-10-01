@@ -284,7 +284,10 @@ class BackupService {
         await userProvider.initializeExpenseProvider(expenseProvider);
         await captureProvider.reload(); // detected payments from the backup
       } catch (e) {
-        // Put the phone's data back exactly as it was.
+        // Put the phone's data back exactly as it was, and drop anything
+        // from the backup that was already loaded into memory.
+        LocalStore.discardPending();
+        expenseProvider.clearUserData();
         for (final key in prefs.getKeys().toList()) {
           if (key.startsWith(_lsPrefix)) await prefs.remove(key);
         }

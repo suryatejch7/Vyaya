@@ -57,4 +57,63 @@ void main() {
     expect(find.text('Removed 2 payments'), findsNothing);
     expect(undone, isFalse);
   });
+
+  testWidgets('A second action folds the bar into a bubble; nothing is lost',
+      (tester) async {
+    final undone = <String>[];
+    await tester.pumpWidget(_app());
+    UndoController.show('Dismissed "Swiggy"', () => undone.add('swiggy'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Dismissed "Swiggy"'), findsOneWidget);
+
+    UndoController.show('Dismissed "Uber"', () => undone.add('uber'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    // Bubble: no message, a count of 2.
+    expect(find.text('Dismissed "Uber"'), findsNothing);
+    expect(find.text('2'), findsOneWidget);
+
+    // Tap opens it on the latest action; UNDO takes back only that one.
+    await tester.tap(find.byIcon(Icons.undo_rounded));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Dismissed "Uber"'), findsOneWidget);
+    await tester.tap(find.text('UNDO'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(undone, ['uber']);
+    expect(find.text('Dismissed "Swiggy"'), findsOneWidget);
+
+    UndoController.dismiss(); // no timer left running
+    await tester.pump(const Duration(milliseconds: 300));
+  });
+
+  testWidgets('Undo all takes everything back, newest first', (tester) async {
+    final undone = <String>[];
+    await tester.pumpWidget(_app());
+    for (final n in ['a', 'b', 'c']) {
+      UndoController.show('Dismissed $n', () => undone.add(n));
+    }
+    await tester.pump();
+    UndoController.expand();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('Undo all 3'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(undone, ['c', 'b', 'a']);
+    expect(find.text('UNDO'), findsNothing);
+  });
+
+  testWidgets('Each new action restarts the 5 seconds', (tester) async {
+    await tester.pumpWidget(_app());
+    UndoController.show('one', () {});
+    await tester.pump(const Duration(seconds: 4));
+    UndoController.show('two', () {});
+    await tester.pump(const Duration(seconds: 4));
+    expect(UndoController.state.value.count, 2);
+    await tester.pump(const Duration(seconds: 1, milliseconds: 100));
+    expect(UndoController.state.value.count, 0);
+  });
 }

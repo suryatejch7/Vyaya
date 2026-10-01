@@ -606,8 +606,15 @@ class MerchantCategorizer {
     final hasPayee = merchant != null && merchant.trim().isNotEmpty;
     if (hasPayee) {
       final payee = _normalizePayee(merchant);
-      final company = _companyBrand(payee.replaceAll(' ', ''));
-      final g = _bestGroup(company ?? payee, _payeeKeywords);
+      // The name itself first ("Instamart" is Groceries); the company ->
+      // brand mapping only when the name alone says nothing ("Bundl").
+      final g = _bestGroup(payee, _payeeKeywords) ??
+          (() {
+            final company = _companyBrand(payee.replaceAll(' ', ''));
+            return company == null
+                ? null
+                : _bestGroup(company, _payeeKeywords);
+          })();
       if (g != null) return groupByKey(g);
     }
     if (rawText != null && rawText.trim().isNotEmpty) {

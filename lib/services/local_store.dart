@@ -57,10 +57,27 @@ class LocalStore {
 
   /// Writes every changed list now. Called before reading storage directly
   /// (backups) and when the app goes to the background.
+  /// Waits for a write already in progress, so when this returns
+  /// everything changed before the call is really on disk.
   static Future<void> flush() async {
     _flushTimer?.cancel();
     _flushTimer = null;
+    while (_flushing != null) {
+      await _flushing;
+    }
     if (_prefs == null || _dirty.isEmpty) return;
+    final run = _writeDirty();
+    _flushing = run;
+    try {
+      await run;
+    } finally {
+      if (identical(_flushing, run)) _flushing = null;
+    }
+  }
+
+  static Future<void>? _flushing;
+
+  static Future<void> _writeDirty() async {
     final keys = _dirty.toList();
     _dirty.clear();
     for (final key in keys) {

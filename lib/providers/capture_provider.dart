@@ -174,9 +174,10 @@ class CaptureProvider extends ChangeNotifier {
   Future<int> importSmsSince(DateTime since) async {
     if (!_smsPermission && !await requestSmsPermission()) return 0;
     final before = _items.length;
-    // Bounded by date; the limit is only a safety cap on how many
-    // payment-like messages get queued in one go.
-    await VyayaCapture.backfillSms(since, limit: 5000);
+    // Bounded by date. The native side counts EVERY inbox SMS against this
+    // limit (not just payment ones), so it's set far above any real inbox:
+    // 3 months with 10,000 messages are all checked, none skipped.
+    await VyayaCapture.backfillSms(since, limit: 1000000);
     await sync();
     return _items.length - before;
   }
@@ -333,6 +334,11 @@ class CaptureProvider extends ChangeNotifier {
     return ka.length >= 2 && ka == MerchantCategorizer.brandKey(b);
   }
 
+  /// Same payee by name, or the same shop under two names.
+  static bool _samePayee(String? a, String? b) =>
+      _merchantsMatch(a, b) ||
+      (a != null && b != null && _sameBrand(a, b));
+
   static bool _merchantsMatch(String? a, String? b) {
     if (a == null || b == null) return false;
     final x = MerchantCategorizer.key(a);
@@ -378,14 +384,12 @@ class CaptureProvider extends ChangeNotifier {
       // "Swiggy") still count as one.
       if (i.merchant != null &&
           t.merchant != null &&
-          !_merchantsMatch(i.merchant, t.merchant) &&
-          !_sameBrand(i.merchant!, t.merchant!)) {
+          !_samePayee(i.merchant, t.merchant)) {
         continue;
       }
       // An item that already combines two reports (app + bank SMS) only
       // takes another one with the same payee, never on timing alone.
-      if (i.captureIds.length >= 2 &&
-          !_merchantsMatch(i.merchant, t.merchant)) {
+      if (i.captureIds.length >= 2 && !_samePayee(i.merchant, t.merchant)) {
         continue;
       }
       final gap = i.capturedAt.difference(capturedAt).abs();
@@ -397,13 +401,16 @@ class CaptureProvider extends ChangeNotifier {
           return i;
         }
         if (gap <= const Duration(hours: 3) &&
-            _merchantsMatch(i.merchant, t.merchant)) {
+            _samePayee(i.merchant, t.merchant)) {
           return i;
         }
       } else if (gap <= const Duration(minutes: 2) &&
+          // Same app twice: two nameless reports (QR payments at two stalls)
+          // are two payments; an exact repeat was already caught above.
+          !(i.merchant == null && t.merchant == null) &&
           (i.merchant == null ||
               t.merchant == null ||
-              _merchantsMatch(i.merchant, t.merchant))) {
+              _samePayee(i.merchant, t.merchant))) {
         return i;
       }
     }
@@ -463,7 +470,12 @@ class CaptureProvider extends ChangeNotifier {
       // marks the bank's plain debit as a card bill).
       flags: {...existing.flags, ...t.flags}.toList(),
     );
-    if (gainedMerchant && existing.isPending) {
+    // Re-guess the category from the newly known payee, but only if it's
+    // still Vyaya's own fallback guess: a category you picked stays.
+    final names = _expenses!.categories.map((c) => c.name).toList();
+    if (gainedMerchant &&
+        existing.isPending &&
+        existing.category == MerchantCategorizer.fallbackCategory(names)) {
       updated = updated.copyWith(
         category: MerchantCategorizer.suggest(
           merchant: t.merchant,

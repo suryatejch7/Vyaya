@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/foundation.dart';
 // Switches now live in AppPrefs (Settings → Notifications).
