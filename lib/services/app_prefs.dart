@@ -13,7 +13,7 @@ class AppPrefs extends ChangeNotifier {
   AppPrefs._();
   static final AppPrefs instance = AppPrefs._();
 
-  static const String appVersion = '3.1.0';
+  static const String appVersion = '2.2.0';
   static const String releasesUrl =
       'https://github.com/suryatejch7/Vyaya/releases';
 
