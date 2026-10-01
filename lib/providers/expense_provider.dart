@@ -1163,9 +1163,11 @@ class ExpenseProvider extends ChangeNotifier {
       if (e.key.compareTo(fromKey) >= 0) continue;
       final m = _parseMonthKey(e.key);
       if (m == null) continue;
-      final save = e.value == 'save';
-      if (save && skipped.contains(e.key)) continue; // you deleted it
-      await _reconcileSavingsFor(m, saveMode: save);
+      // You deleted that month's Saved entry or carried-over income
+      // yourself: it stays deleted (this used to bring a carried-over
+      // income straight back).
+      if (skipped.contains(e.key)) continue;
+      await _reconcileSavingsFor(m, saveMode: e.value == 'save');
     }
   }
 

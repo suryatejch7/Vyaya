@@ -47,7 +47,7 @@ class MyApp extends StatelessWidget {
         title: 'Vyaya',
         theme: AppTheme.darkTheme,
         home: const AppBootstrap(),
-        navigatorKey: appNavigatorKey,
+        // navigatorKey: appNavigatorKey,
         debugShowCheckedModeBanner: false,
         builder: (context, child) =>
             // App lock switched off for now:
