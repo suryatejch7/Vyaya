@@ -2221,6 +2221,10 @@ class _DetectedCard extends StatefulWidget {
 class _DetectedCardState extends State<_DetectedCard> {
   bool _open = false;
 
+  /// The SMS / notification text inside an open card; folded by default so
+  /// the card stays short.
+  bool _showMessage = false;
+
   ExpenseCategory _category(List<ExpenseCategory> categories, String name) =>
       categories.firstWhere(
         (c) => c.name == name,
@@ -2511,7 +2515,10 @@ class _DetectedCardState extends State<_DetectedCard> {
       child: InkWell(
         onTap: widget.selecting
             ? widget.onToggle
-            : () => setState(() => _open = !_open),
+            : () => setState(() {
+                  _open = !_open;
+                  if (!_open) _showMessage = false; // opens folded next time
+                }),
         onLongPress: widget.selecting
             ? null
             : () {
@@ -2591,20 +2598,57 @@ class _DetectedCardState extends State<_DetectedCard> {
           ),
         ),
       if (suggestion != null) _suggestionRow(suggestion),
-      // The message itself, so you can check what was read from it.
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(10),
-        margin: const EdgeInsets.only(top: 6),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: SelectableText(
-          item.rawText,
-          style: const TextStyle(fontSize: 12, color: Colors.white70),
+      // The message it was read from, folded until you ask for it.
+      InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => setState(() => _showMessage = !_showMessage),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+          child: Row(
+            children: [
+              Icon(
+                item.sourceKind == 'notification'
+                    ? Icons.notifications_none_rounded
+                    : Icons.sms_outlined,
+                size: 15,
+                color: Colors.grey,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _showMessage
+                      ? 'Hide message'
+                      : 'Show message from ${item.appLabel}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ),
+              AnimatedRotation(
+                turns: _showMessage ? 0.5 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: const Icon(Icons.keyboard_arrow_down_rounded,
+                    size: 18, color: Colors.grey),
+              ),
+            ],
+          ),
         ),
       ),
+      // The card's own AnimatedSize animates this opening and closing.
+      if (_showMessage)
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          margin: const EdgeInsets.only(bottom: 4),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: SelectableText(
+            item.rawText,
+            style: const TextStyle(fontSize: 12, color: Colors.white70),
+          ),
+        ),
       Row(
         children: [
           if (item.isDebit)

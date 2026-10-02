@@ -18,6 +18,7 @@ import '../services/app_prefs.dart';
 // App lock is switched off for now (kept for later).
 // import '../widgets/app_lock.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:intl/intl.dart' show DateFormat;
 import 'package:url_launcher/url_launcher.dart';
 
 /// Settings is a hub page; heavier sections open as their own pages that
@@ -451,6 +452,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ]),
               const SizedBox(height: 16),
               _group([
+                _row(
+                  icon: Icons.event_busy_rounded,
+                  color: Colors.orangeAccent,
+                  title: 'Delete data by date',
+                  subtitle: 'Remove entries from a period, e.g. two months',
+                  onTap: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: const Color(0xFF121212),
+                    shape: const RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.vertical(top: Radius.circular(24))),
+                    builder: (_) => const _DeleteRangeSheet(),
+                  ),
+                ),
                 _row(
                   icon: Icons.delete_forever_rounded,
                   color: Colors.redAccent,
@@ -3600,6 +3616,383 @@ class _ScrollArrowsRowState extends State<_ScrollArrowsRow> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ==================== DELETE BY DATE ====================
+
+/// Settings → Delete data by date. Pick a period and what to delete; the
+/// counts update live. Deleting asks again and needs "DELETE" typed, since
+/// it can't be undone.
+class _DeleteRangeSheet extends StatefulWidget {
+  const _DeleteRangeSheet();
+
+  @override
+  State<_DeleteRangeSheet> createState() => _DeleteRangeSheetState();
+}
+
+class _DeleteRangeSheetState extends State<_DeleteRangeSheet> {
+  DateTimeRange? _range;
+  String? _preset; // label of the quick pick in use
+  bool _expenses = true;
+  bool _incomes = true;
+  bool _detected = true;
+  bool _working = false;
+
+  static final _day = DateFormat('d MMM yyyy');
+
+  DateTime get _today {
+    final n = DateTime.now();
+    return DateTime(n.year, n.month, n.day);
+  }
+
+  List<(String, DateTimeRange)> get _presets {
+    final t = _today;
+    return [
+      ('This month', DateTimeRange(start: DateTime(t.year, t.month), end: t)),
+      (
+        'Last month',
+        DateTimeRange(
+            start: DateTime(t.year, t.month - 1),
+            end: DateTime(t.year, t.month, 0))
+      ),
+      (
+        'Last 3 months',
+        DateTimeRange(start: DateTime(t.year, t.month - 2), end: t)
+      ),
+    ];
+  }
+
+  Future<void> _pickDates() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(_today.year + 5, 12, 31),
+      initialDateRange: _range,
+      helpText: 'Delete data between',
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: Theme.of(context).colorScheme.copyWith(
+                surface: const Color(0xFF121212),
+                onSurface: Colors.white,
+              ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        _range = picked;
+        _preset = null;
+      });
+    }
+  }
+
+  String _rangeText(DateTimeRange r) => r.start == r.end
+      ? _day.format(r.start)
+      : '${_day.format(r.start)} – ${_day.format(r.end)}';
+
+  /// Detected payments dated inside the period (any list).
+  List<String> _detectedIds(CaptureProvider cap, DateTimeRange r) {
+    final start = DateTime(r.start.year, r.start.month, r.start.day);
+    final end = DateTime(r.end.year, r.end.month, r.end.day + 1);
+    return [
+      for (final i in [
+        ...cap.pending,
+        ...cap.added,
+        ...cap.duplicates,
+        ...cap.dismissed,
+      ])
+        if (!i.occurredAt.isBefore(start) && i.occurredAt.isBefore(end)) i.id
+    ];
+  }
+
+  String _plural(int n, String one, String many) =>
+      '$n ${n == 1 ? one : many}';
+
+  Future<void> _delete(int nExp, int nInc, int nDet) async {
+    final r = _range!;
+    final parts = [
+      if (_expenses && nExp > 0) _plural(nExp, 'expense', 'expenses'),
+      if (_incomes && nInc > 0) _plural(nInc, 'income entry', 'income entries'),
+      if (_detected && nDet > 0)
+        _plural(nDet, 'detected payment', 'detected payments'),
+    ];
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _TypeToConfirmDialog(
+        what: parts.join(', '),
+        period: _rangeText(r),
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    final ep = context.read<ExpenseProvider>();
+    final cap = context.read<CaptureProvider>();
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _working = true);
+    var total = 0;
+    try {
+      total += await ep.deleteRange(r.start, r.end,
+          expenses: _expenses, incomes: _incomes);
+      if (_detected) {
+        final ids = _detectedIds(cap, r);
+        if (ids.isNotEmpty) {
+          total += (await cap.removeItems(ids: ids)).length;
+        }
+      }
+    } catch (e) {
+      if (mounted) setState(() => _working = false);
+      // Say what did go, if anything, before it failed.
+      messenger.showSnackBar(SnackBar(
+          content: Text(total > 0
+              ? 'Deleted ${_plural(total, 'entry', 'entries')}, then stopped: $e'
+              : 'Delete failed: $e')));
+      return;
+    }
+    // The sheet may have been swiped away meanwhile; don't pop Settings.
+    if (mounted) navigator.pop();
+    messenger.showSnackBar(SnackBar(
+      content: Text('Deleted ${_plural(total, 'entry', 'entries')} '
+          'from ${_rangeText(r)}'),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ep = context.watch<ExpenseProvider>();
+    final cap = context.watch<CaptureProvider>();
+    final r = _range;
+    final found = r == null ? null : ep.entriesInRange(r.start, r.end);
+    final nExp = found?.expenses.length ?? 0;
+    final nInc = found?.incomes.length ?? 0;
+    final nDet = r == null ? 0 : _detectedIds(cap, r).length;
+    final total = (_expenses ? nExp : 0) +
+        (_incomes ? nInc : 0) +
+        (_detected ? nDet : 0);
+    final primary = Theme.of(context).colorScheme.primary;
+
+    Widget presetChip(String label, DateTimeRange range) {
+      final on = _preset == label;
+      return ChoiceChip(
+        label: Text(label),
+        selected: on,
+        showCheckmark: false,
+        onSelected: _working
+            ? null
+            : (_) => setState(() {
+          _range = range;
+          _preset = label;
+        }),
+        labelStyle: TextStyle(color: on ? Colors.black : Colors.white70),
+        selectedColor: Colors.redAccent,
+        backgroundColor: const Color(0xFF1A1A1A),
+        side: BorderSide.none,
+        shape: const StadiumBorder(),
+      );
+    }
+
+    Widget kind(String title, String sub, int n, bool on,
+            ValueChanged<bool> onChanged) =>
+        SwitchListTile(
+          value: on,
+          onChanged: _working ? null : onChanged,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          title: Text('$title${r == null ? '' : '  ·  $n'}',
+              style: const TextStyle(color: Colors.white)),
+          subtitle: Text(sub,
+              style: const TextStyle(color: Colors.grey, fontSize: 12)),
+        );
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+            20, 8, 20, 16 + MediaQuery.of(context).viewInsets.bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text('Delete data by date',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            const Text(
+              'Removes entries dated in the period you pick. Categories, accounts, recurring entries, lent/borrowed and settings stay.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final (label, range) in _presets) presetChip(label, range),
+                ActionChip(
+                  avatar: Icon(Icons.edit_calendar_rounded,
+                      size: 16,
+                      color: r != null && _preset == null
+                          ? Colors.black
+                          : Colors.white70),
+                  label: Text(r != null && _preset == null
+                      ? _rangeText(r)
+                      : 'Pick dates…'),
+                  onPressed: _working ? null : _pickDates,
+                  labelStyle: TextStyle(
+                      color: r != null && _preset == null
+                          ? Colors.black
+                          : Colors.white70),
+                  backgroundColor: r != null && _preset == null
+                      ? Colors.redAccent
+                      : const Color(0xFF1A1A1A),
+                  side: BorderSide.none,
+                  shape: const StadiumBorder(),
+                ),
+              ],
+            ),
+            if (r != null && _preset != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(_rangeText(r),
+                    style: const TextStyle(color: Colors.grey, fontSize: 12)),
+              ),
+            const SizedBox(height: 12),
+            kind('Expenses', 'Month-end "Saved" entries update by themselves',
+                nExp, _expenses, (v) => setState(() => _expenses = v)),
+            kind('Income', 'Carried-over leftovers are kept and update', nInc,
+                _incomes, (v) => setState(() => _incomes = v)),
+            kind('Detected payments', 'Clears them from the review lists',
+                nDet, _detected, (v) => setState(() => _detected = v)),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: (_working || total == 0)
+                    ? null
+                    : () => _delete(nExp, nInc, nDet),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                icon: _working
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.delete_forever_rounded),
+                label: Text(r == null
+                    ? 'Pick a period first'
+                    : total == 0
+                        ? 'Nothing to delete'
+                        : 'Delete ${_plural(total, 'entry', 'entries')}'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Center(
+              child: TextButton.icon(
+                onPressed: _working
+                    ? null
+                    : () => BackupService.createAndShareBackup(context),
+                style: TextButton.styleFrom(foregroundColor: primary),
+                icon: const Icon(Icons.backup_outlined, size: 18),
+                label: const Text('Back up first'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Second check before deleting: says exactly what goes and needs DELETE
+/// typed before the button works.
+class _TypeToConfirmDialog extends StatefulWidget {
+  final String what;
+  final String period;
+  const _TypeToConfirmDialog({required this.what, required this.period});
+
+  @override
+  State<_TypeToConfirmDialog> createState() => _TypeToConfirmDialogState();
+}
+
+class _TypeToConfirmDialogState extends State<_TypeToConfirmDialog> {
+  final _text = TextEditingController();
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  bool get _ok => _text.text.trim().toUpperCase() == 'DELETE';
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF2A2A2A),
+      icon: const Icon(Icons.warning_amber_rounded,
+          color: Colors.redAccent, size: 32),
+      title: const Text('Delete permanently?',
+          style: TextStyle(color: Colors.white)),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${widget.what} from ${widget.period} will be deleted. '
+              'This can\'t be undone.',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 16),
+            const Text('Type DELETE to confirm',
+                style: TextStyle(color: Colors.grey, fontSize: 12)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _text,
+              autofocus: true,
+              textCapitalization: TextCapitalization.characters,
+              style: const TextStyle(color: Colors.white, letterSpacing: 1),
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                hintText: 'DELETE',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _ok ? () => Navigator.pop(context, true) : null,
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.redAccent,
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('Delete'),
+        ),
+      ],
     );
   }
 }

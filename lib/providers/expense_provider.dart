@@ -487,6 +487,41 @@ class ExpenseProvider extends ChangeNotifier {
     }
   }
 
+  /// Expenses and income dated [from]..[to] (both days included), for
+  /// Settings → Delete by date. Month-end "Saved" entries and carried-over
+  /// leftovers are left out: they follow each month's totals and update by
+  /// themselves (a Saved entry goes away when its month is emptied).
+  ({List<Expense> expenses, List<Income> incomes}) entriesInRange(
+      DateTime from, DateTime to) {
+    final start = _dateOnly(from);
+    final end = DateTime(to.year, to.month, to.day + 1); // day after [to]
+    bool inside(DateTime d) => !d.isBefore(start) && d.isBefore(end);
+    return (
+      expenses: [
+        for (final e in _expenseManager.expenses)
+          if (e.id != null && !_isAutoSaved(e) && inside(e.date)) e
+      ],
+      incomes: [
+        for (final i in _incomeManager.incomes)
+          if (i.id != null && !isCarryForwardEntry(i) && inside(i.date)) i
+      ],
+    );
+  }
+
+  /// Permanently deletes what [entriesInRange] finds (only the kinds
+  /// asked for). Returns how many entries went.
+  Future<int> deleteRange(DateTime from, DateTime to,
+      {bool expenses = true, bool incomes = true}) async {
+    final found = entriesInRange(from, to);
+    final expenseIds = expenses
+        ? [for (final e in found.expenses) e.id!]
+        : const <String>[];
+    final incomeIds =
+        incomes ? [for (final i in found.incomes) i.id!] : const <String>[];
+    await deleteMany(expenseIds: expenseIds, incomeIds: incomeIds);
+    return expenseIds.length + incomeIds.length;
+  }
+
   Future<void> deleteIncome(String incomeId) async {
     try {
       _isLoading = true;

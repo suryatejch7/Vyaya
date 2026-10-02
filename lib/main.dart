@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'providers/expense_provider.dart';
 import 'providers/user_provider.dart';
@@ -14,8 +15,28 @@ import 'widgets/undo_bar.dart';
 // import 'widgets/app_lock.dart'; // app lock switched off for now
 import 'services/smart_notifications.dart';
 
+/// System bars drawn over the app: see-through, light icons, and no grey or
+/// white "contrast" scrim behind the 3-button navigation (the app's black
+/// shows through instead, with a soft fade above it; see
+/// [_SystemNavBarGuard]).
+const _systemBars = SystemUiOverlayStyle(
+  statusBarColor: Colors.transparent,
+  statusBarIconBrightness: Brightness.light,
+  statusBarBrightness: Brightness.dark, // iOS
+  systemStatusBarContrastEnforced: false,
+  systemNavigationBarColor: Colors.transparent,
+  systemNavigationBarDividerColor: Colors.transparent,
+  systemNavigationBarIconBrightness: Brightness.light,
+  systemNavigationBarContrastEnforced: false,
+);
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Draw behind the system bars on every Android version (Android 15 does
+  // this anyway), so the bars look the same everywhere.
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  SystemChrome.setSystemUIOverlayStyle(_systemBars);
 
   // On-device storage (SharedPreferences)
   await LocalStore.initialize();
@@ -52,7 +73,12 @@ class MyApp extends StatelessWidget {
         builder: (context, child) =>
             // App lock switched off for now:
             // _SystemNavBarGuard(child: LockGate(child: UndoHost(child: child!))),
-            _SystemNavBarGuard(child: UndoHost(child: child!)),
+            // The region keeps the bars see-through on every screen (an
+            // AppBar only sets the status bar at the top).
+            AnnotatedRegion<SystemUiOverlayStyle>(
+              value: _systemBars,
+              child: _SystemNavBarGuard(child: UndoHost(child: child!)),
+            ),
       ),
     );
   }
@@ -129,6 +155,11 @@ class _AppBootstrapState extends State<AppBootstrap> {
 /// Gesture navigation reports a small bottom inset (~16-24dp) and is left
 /// untouched; button navigation reports ~48dp, so anything above the
 /// threshold gets padded out and removed from the inner MediaQuery.
+///
+/// The buttons then sit on the app's own black (the system bar is
+/// see-through), and a short gradient lets the app fade into it, like
+/// Google Photos, instead of ending at a hard edge. Layout is unchanged:
+/// nothing ends up under the buttons.
 class _SystemNavBarGuard extends StatelessWidget {
   const _SystemNavBarGuard({required this.child});
 
@@ -136,29 +167,65 @@ class _SystemNavBarGuard extends StatelessWidget {
 
   static const double _buttonNavThreshold = 32;
 
+  /// Height of the fade above the buttons (short, so bottom bars and
+  /// buttons near the edge stay readable).
+  static const double _fadeHeight = 18;
+
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
     final navInset = mq.viewPadding.bottom;
 
-    if (navInset <= _buttonNavThreshold) return child;
+    // Gesture navigation: nothing to pad. The tree below stays the same
+    // shape either way, so turning the phone (the button bar can move or
+    // change size) never rebuilds the screens underneath.
+    final buttons = navInset > _buttonNavThreshold;
+    final inset = buttons ? navInset : 0.0;
 
     return ColoredBox(
       color: Colors.black,
-      child: Padding(
-        padding: EdgeInsets.only(bottom: navInset),
-        child: MediaQuery(
-          data: mq.copyWith(
-            padding: mq.padding.copyWith(bottom: 0),
-            viewPadding: mq.viewPadding.copyWith(bottom: 0),
-            // Keyboard inset is measured from the screen bottom; subtract the
-            // nav bar we've already padded for so forms don't over-shift.
-            viewInsets: mq.viewInsets.copyWith(
-              bottom: math.max(0.0, mq.viewInsets.bottom - navInset),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Padding(
+            padding: EdgeInsets.only(bottom: inset),
+            child: MediaQuery(
+              data: !buttons ? mq : mq.copyWith(
+                padding: mq.padding.copyWith(bottom: 0),
+                viewPadding: mq.viewPadding.copyWith(bottom: 0),
+                // Keyboard inset is measured from the screen bottom; subtract the
+                // nav bar we've already padded for so forms don't over-shift.
+                viewInsets: mq.viewInsets.copyWith(
+                  bottom: math.max(0.0, mq.viewInsets.bottom - navInset),
+                ),
+              ),
+              child: child,
             ),
           ),
-          child: child,
-        ),
+          // Fade into the black behind the buttons. Taps go through.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: inset,
+            height: buttons ? _fadeHeight : 0,
+            child: const IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0x00000000),
+                      Color(0x33000000),
+                      Color(0x99000000),
+                    ],
+                    stops: [0, 0.55, 1],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
