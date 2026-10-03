@@ -16,7 +16,7 @@ import '../services/money_format.dart';
 enum RecentViewType { all, creditCard }
 
 class DashboardScreen extends StatefulWidget {
-  final void Function(bool isSelectionMode, int selectedCount, VoidCallback clearSelection, VoidCallback deleteSelected)? onSelectionChanged;
+  final void Function(bool isSelectionMode, int selectedCount, VoidCallback clearSelection, VoidCallback deleteSelected, VoidCallback editSelected)? onSelectionChanged;
 
   const DashboardScreen({super.key, this.onSelectionChanged});
 
@@ -39,6 +39,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _totalSelected,
       _clearSelection,
       _deleteSelected,
+      _editSelected,
     );
   }
 
@@ -117,6 +118,138 @@ class _DashboardScreenState extends State<DashboardScreen> {
         await provider.restoreExpenses(deletedExpenses);
         await provider.restoreIncomes(deletedIncomes);
       },
+    );
+  }
+
+  /// Changes the category, account or date of everything selected at once,
+  /// with undo. Automatic entries (Saved, carried over) are left out.
+  Future<void> _editSelected() async {
+    final provider = context.read<ExpenseProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final expenses = provider.expenses
+        .where((e) =>
+            _selectedExpenseIds.contains(e.id) &&
+            !ExpenseProvider.isAutoSavedEntry(e))
+        .toList();
+    final incomes = provider.incomes
+        .where((i) =>
+            _selectedIncomeIds.contains(i.id) &&
+            !ExpenseProvider.isCarryForwardEntry(i))
+        .toList();
+    if (expenses.isEmpty && incomes.isEmpty) {
+      messenger.showSnackBar(const SnackBar(
+          content: Text('Automatic entries (Saved, carried over) can\'t be edited')));
+      return;
+    }
+
+    final what = await _pickFromSheet<String>('Change for selected', [
+      if (expenses.isNotEmpty)
+        ('category', incomes.isEmpty ? 'Category' : 'Category (expenses only)',
+            const Icon(Icons.category_rounded)),
+      if (provider.accounts.isNotEmpty)
+        ('account', 'Account', const Icon(Icons.account_balance_rounded)),
+      ('date', 'Date', const Icon(Icons.calendar_today_rounded)),
+    ]);
+    if (what == null || !mounted) return;
+
+    List<Expense> newExpenses = const [];
+    List<Income> newIncomes = const [];
+    String label;
+    final now = DateTime.now();
+    if (what == 'category') {
+      final cat = await _pickFromSheet<String>('Category', [
+        for (final c in provider.categories)
+          if (c.name != ExpenseProvider.savedCategoryName)
+            (c.name, c.displayName,
+                Text(c.icon, style: const TextStyle(fontSize: 20))),
+      ]);
+      if (cat == null) return;
+      newExpenses = [
+        for (final e in expenses) e.copyWith(category: cat, updatedAt: now)
+      ];
+      label = 'Moved ${expenses.length} to $cat';
+    } else if (what == 'account') {
+      final acc = await _pickFromSheet<String>('Account', [
+        for (final a in provider.accounts)
+          (a.id, a.name, const Icon(Icons.account_balance_wallet_rounded)),
+      ]);
+      if (acc == null) return;
+      newExpenses = [
+        for (final e in expenses) e.copyWith(accountId: acc, updatedAt: now)
+      ];
+      newIncomes = [
+        for (final i in incomes) i.copyWith(accountId: acc, updatedAt: now)
+      ];
+      label = 'Changed account of ${expenses.length + incomes.length}';
+    } else {
+      final first = expenses.isNotEmpty ? expenses.first.date : incomes.first.date;
+      final day = await showDatePicker(
+        context: context,
+        initialDate: first,
+        firstDate: DateTime(2000),
+        lastDate: DateTime(now.year + 5, 12, 31),
+      );
+      if (day == null) return;
+      // Same day for all; each keeps its own time of day.
+      DateTime on(DateTime d) => DateTime(
+          day.year, day.month, day.day, d.hour, d.minute, d.second);
+      newExpenses = [
+        for (final e in expenses) e.copyWith(date: on(e.date), updatedAt: now)
+      ];
+      newIncomes = [
+        for (final i in incomes) i.copyWith(date: on(i.date), updatedAt: now)
+      ];
+      label = 'Moved ${expenses.length + incomes.length} to '
+          '${DateFormat('d MMM yyyy').format(day)}';
+    }
+    if (!mounted) return;
+    _clearSelection();
+    await provider.updateMany(expenses: newExpenses, incomes: newIncomes);
+    // Undo puts back the copies from before the change.
+    showUndo(
+        label,
+        () => provider.updateMany(
+            expenses: newExpenses.isNotEmpty ? expenses : const [],
+            incomes: newIncomes.isNotEmpty ? incomes : const []));
+  }
+
+  Future<T?> _pickFromSheet<T>(
+      String title, List<(T, String, Widget)> options) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return showModalBottomSheet<T>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF121212),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.7),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                child: Text(title,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold)),
+              ),
+              for (final o in options)
+                ListTile(
+                  leading: IconTheme(
+                      data: IconThemeData(color: primary), child: o.$3),
+                  title: Text(o.$2,
+                      style: const TextStyle(color: Colors.white)),
+                  onTap: () => Navigator.pop(context, o.$1),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -432,130 +565,132 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Widget _buildExpensesList(ExpenseProvider provider) {
-    final expenses = provider.expenses;
-
-    if (expenses.isEmpty) {
-      return SliverFillRemaining(
-        hasScrollBody: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 40),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.receipt_long_outlined,
-                size: 80,
-                color: Colors.grey[700],
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'No expenses found',
-                style: TextStyle(fontSize: 18, color: Colors.grey),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Add your first expense by tapping the + button',
-                style: TextStyle(fontSize: 14, color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    final currency = provider.currency;
-    final categories = provider.categories;
-
-    return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, index) {
-          final expense = expenses[index];
-          final category = _findCategory(categories, expense.category);
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: ExpenseCard(
-              key: ValueKey('expense_${expense.id}'),
-              expense: expense,
-              currency: currency,
-              category: category,
-              index: index,
-              isSelectionMode: _isSelectionMode,
-              isSelected: _selectedExpenseIds.contains(expense.id),
-              onLongPress: () => _startSelectionWithExpense(expense.id!),
-              onSelectionTap: () => _toggleExpenseSelection(expense.id!),
-            ),
-          );
-        },
-        childCount: expenses.length,
-        addAutomaticKeepAlives: false,
-        addRepaintBoundaries: true,
-      ),
-    );
-  }
-
-  Widget _buildIncomesList(ExpenseProvider provider) {
-    final incomes = provider.incomes;
-
-    if (incomes.isEmpty) {
-      return SliverFillRemaining(
-        hasScrollBody: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 40),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.account_balance_wallet_outlined,
-                size: 80,
-                color: Colors.grey[700],
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'No income recorded',
-                style: TextStyle(fontSize: 18, color: Colors.grey),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Add income by tapping the + button',
-                style: TextStyle(fontSize: 14, color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    final currency = provider.currency;
-
-    return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, index) {
-          final income = incomes[index];
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: IncomeCard(
-              key: ValueKey('income_${income.id}'),
-              income: income,
-              currency: currency,
-              index: index,
-              isSelectionMode: _isSelectionMode,
-              isSelected: _selectedIncomeIds.contains(income.id),
-              onLongPress: () => _startSelectionWithIncome(income.id!),
-              onSelectionTap: () => _toggleIncomeSelection(income.id!),
-            ),
-          );
-        },
-        childCount: incomes.length,
-        addAutomaticKeepAlives: false,
-        addRepaintBoundaries: true,
-      ),
-    );
-  }
+  // Not used any more: Home shows one combined list
+  // (_buildAllTransactionsList). Kept for reference.
+  // Widget _buildExpensesList(ExpenseProvider provider) {
+  //   final expenses = provider.expenses;
+  //
+  //   if (expenses.isEmpty) {
+  //     return SliverFillRemaining(
+  //       hasScrollBody: false,
+  //       child: Padding(
+  //         padding: const EdgeInsets.symmetric(vertical: 40),
+  //         child: Column(
+  //           mainAxisSize: MainAxisSize.min,
+  //           mainAxisAlignment: MainAxisAlignment.center,
+  //           children: [
+  //             Icon(
+  //               Icons.receipt_long_outlined,
+  //               size: 80,
+  //               color: Colors.grey[700],
+  //             ),
+  //             const SizedBox(height: 16),
+  //             const Text(
+  //               'No expenses found',
+  //               style: TextStyle(fontSize: 18, color: Colors.grey),
+  //             ),
+  //             const SizedBox(height: 8),
+  //             const Text(
+  //               'Add your first expense by tapping the + button',
+  //               style: TextStyle(fontSize: 14, color: Colors.grey),
+  //               textAlign: TextAlign.center,
+  //             ),
+  //           ],
+  //         ),
+  //       ),
+  //     );
+  //   }
+  //
+  //   final currency = provider.currency;
+  //   final categories = provider.categories;
+  //
+  //   return SliverList(
+  //     delegate: SliverChildBuilderDelegate(
+  //       (context, index) {
+  //         final expense = expenses[index];
+  //         final category = _findCategory(categories, expense.category);
+  //         return Padding(
+  //           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+  //           child: ExpenseCard(
+  //             key: ValueKey('expense_${expense.id}'),
+  //             expense: expense,
+  //             currency: currency,
+  //             category: category,
+  //             index: index,
+  //             isSelectionMode: _isSelectionMode,
+  //             isSelected: _selectedExpenseIds.contains(expense.id),
+  //             onLongPress: () => _startSelectionWithExpense(expense.id!),
+  //             onSelectionTap: () => _toggleExpenseSelection(expense.id!),
+  //           ),
+  //         );
+  //       },
+  //       childCount: expenses.length,
+  //       addAutomaticKeepAlives: false,
+  //       addRepaintBoundaries: true,
+  //     ),
+  //   );
+  // }
+  //
+  // Widget _buildIncomesList(ExpenseProvider provider) {
+  //   final incomes = provider.incomes;
+  //
+  //   if (incomes.isEmpty) {
+  //     return SliverFillRemaining(
+  //       hasScrollBody: false,
+  //       child: Padding(
+  //         padding: const EdgeInsets.symmetric(vertical: 40),
+  //         child: Column(
+  //           mainAxisSize: MainAxisSize.min,
+  //           mainAxisAlignment: MainAxisAlignment.center,
+  //           children: [
+  //             Icon(
+  //               Icons.account_balance_wallet_outlined,
+  //               size: 80,
+  //               color: Colors.grey[700],
+  //             ),
+  //             const SizedBox(height: 16),
+  //             const Text(
+  //               'No income recorded',
+  //               style: TextStyle(fontSize: 18, color: Colors.grey),
+  //             ),
+  //             const SizedBox(height: 8),
+  //             const Text(
+  //               'Add income by tapping the + button',
+  //               style: TextStyle(fontSize: 14, color: Colors.grey),
+  //               textAlign: TextAlign.center,
+  //             ),
+  //           ],
+  //         ),
+  //       ),
+  //     );
+  //   }
+  //
+  //   final currency = provider.currency;
+  //
+  //   return SliverList(
+  //     delegate: SliverChildBuilderDelegate(
+  //       (context, index) {
+  //         final income = incomes[index];
+  //         return Padding(
+  //           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+  //           child: IncomeCard(
+  //             key: ValueKey('income_${income.id}'),
+  //             income: income,
+  //             currency: currency,
+  //             index: index,
+  //             isSelectionMode: _isSelectionMode,
+  //             isSelected: _selectedIncomeIds.contains(income.id),
+  //             onLongPress: () => _startSelectionWithIncome(income.id!),
+  //             onSelectionTap: () => _toggleIncomeSelection(income.id!),
+  //           ),
+  //         );
+  //       },
+  //       childCount: incomes.length,
+  //       addAutomaticKeepAlives: false,
+  //       addRepaintBoundaries: true,
+  //     ),
+  //   );
+  // }
 
   Widget _buildAllTransactionsList(ExpenseProvider provider) {
     final expenses = provider.viewMonthExpenses;
@@ -1043,13 +1178,19 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
                     ),
                   ),
                   const SizedBox(width: 8),
-                  _leftLabel(
-                    expenseProvider,
-                    isCurrent: isCurrent,
-                    isOver: isOverBudget,
-                    excess: budgetExcess,
-                    left: left,
-                    money: money,
+                  // At most a bit over half the row, so a long "Carried
+                  // over ₹…" shortens instead of overflowing.
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                        maxWidth: MediaQuery.sizeOf(context).width * 0.55),
+                    child: _leftLabel(
+                      expenseProvider,
+                      isCurrent: isCurrent,
+                      isOver: isOverBudget,
+                      excess: budgetExcess,
+                      left: left,
+                      money: money,
+                    ),
                   ),
                 ],
               ),
@@ -1097,6 +1238,8 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
   }) {
     if (isOver) {
       return Text('${money(excess, 0)} over',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(
               fontSize: 14, color: Colors.red, fontWeight: FontWeight.w500));
     }
@@ -1104,6 +1247,8 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
     final carried = isCurrent ? 0.0 : p.viewMonthCarriedOut;
     if (saved <= 0 && carried <= 0) {
       return Text('${money(left, 0)} left',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(
               fontSize: 14, color: Colors.green, fontWeight: FontWeight.w500));
     }
@@ -1114,14 +1259,18 @@ class _TotalExpenseWidgetState extends State<TotalExpenseWidget>
         mainAxisSize: MainAxisSize.min,
         children: [
           const Text('💰 ', style: TextStyle(fontSize: 13)),
-          Text(
-            saved > 0
-                ? 'Saved ${money(saved, 0)}'
-                : 'Carried over ${money(carried, 0)}',
-            style: const TextStyle(
-                fontSize: 14,
-                color: Color(0xFF26A69A),
-                fontWeight: FontWeight.w600),
+          Flexible(
+            child: Text(
+              saved > 0
+                  ? 'Saved ${money(saved, 0)}'
+                  : 'Carried over ${money(carried, 0)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 14,
+                  color: Color(0xFF26A69A),
+                  fontWeight: FontWeight.w600),
+            ),
           ),
           const Icon(Icons.chevron_right, size: 16, color: Color(0xFF26A69A)),
         ],

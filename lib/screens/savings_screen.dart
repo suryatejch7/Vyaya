@@ -132,7 +132,7 @@ class SavingsScreen extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             showCarry
-                ? 'Last month\'s leftover, now part of ${DateFormat('MMMM').format(DateTime(lastCarry!.month.year, lastCarry!.month.month + 1))}\'s income'
+                ? 'Last month\'s leftover, now part of ${DateFormat('MMMM').format(DateTime(lastCarry!.month.year, lastCarry.month.month + 1))}\'s income'
                 : months == 0
                     ? 'Nothing saved yet'
                     : 'from $months month${months == 1 ? '' : 's'}',

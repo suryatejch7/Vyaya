@@ -50,7 +50,10 @@ class _GlassBottomSheetState extends State<GlassBottomSheet>
     final contentHeight =
         baseHeight + (widget.items.length * (itemHeight + spacing)) + 12;
     final maxHeight = screenHeight * 0.6;
-    final finalHeight = contentHeight.clamp(200.0, maxHeight);
+    // On a very short screen (landscape, split screen) 60% can be under
+    // 200, and clamp() throws when its lower bound is above the upper one.
+    final minHeight = maxHeight < 200.0 ? maxHeight : 200.0;
+    final finalHeight = contentHeight.clamp(minHeight, maxHeight);
 
     return GestureDetector(
       // Tap anywhere outside the bottom sheet to dismiss

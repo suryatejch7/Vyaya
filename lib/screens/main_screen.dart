@@ -11,6 +11,7 @@ import '../services/intent_service.dart';
 import '../services/local_store.dart';
 import '../services/backup_service.dart';
 import '../services/smart_notifications.dart';
+import '../services/notification_service.dart';
 import '../widgets/liquid_glass_nav_bar.dart';
 import '../widgets/expandable_fab.dart';
 import '../providers/expense_provider.dart';
@@ -31,6 +32,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _selectedCount = 0;
   VoidCallback? _clearSelection;
   VoidCallback? _deleteSelected;
+  VoidCallback? _editSelected;
 
   final List<Widget> _screens = [];
 
@@ -41,12 +43,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _screens.addAll([
       DashboardScreen(
         onSelectionChanged:
-            (isSelectionMode, selectedCount, clearSelection, deleteSelected) {
+            (isSelectionMode, selectedCount, clearSelection, deleteSelected,
+                editSelected) {
               setState(() {
                 _isSelectionMode = isSelectionMode;
                 _selectedCount = selectedCount;
                 _clearSelection = clearSelection;
                 _deleteSelected = deleteSelected;
+                _editSelected = editSelected;
               });
             },
       ),
@@ -55,6 +59,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // SharingIntentService.setContext(context); // screenshot scanning off
       IntentService.setContext(context);
+      // First launch: ask for the notification permission now that the
+      // app is on screen (not over a black startup screen).
+      NotificationService.askPermissionOnce();
     });
   }
 
@@ -83,10 +90,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       SmartNotifications.sync();
       context.read<ExpenseProvider>().runAutomations();
       // Pick up payments captured in the background + permission changes
-      // made in system settings.
-      context.read<CaptureProvider>()
-        ..refreshStatus()
-        ..sync();
+      // made in system settings (and reconnect the notification reader).
+      context.read<CaptureProvider>().onResume();
     }
   }
 
@@ -133,6 +138,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             selectedCount: _selectedCount,
             onClearSelection: _clearSelection,
             onDeleteSelected: _deleteSelected,
+            onEditSelected: _editSelected,
           ),
           // While the + menu is open, a tap anywhere outside it closes it
           // instead of reaching the list. (No dimming; to dim the screen,

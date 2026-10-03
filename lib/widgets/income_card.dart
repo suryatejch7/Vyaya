@@ -115,23 +115,32 @@ class IncomeCard extends StatelessWidget {
                 ),
               ),
               // Amount and date column (same structure as expense card)
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '+$currency${formatAmount(income.amount)}',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green,
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // Big amounts shrink instead of squeezing the name
+                    // (small phones, large font).
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        '+$currency${formatAmount(income.amount)}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _formatDate(income.date),
-                    style: const TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ],
+                    const SizedBox(height: 2),
+                    Text(
+                      _formatDate(income.date),
+                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(width: 4),
               // Delete menu - same as expense card

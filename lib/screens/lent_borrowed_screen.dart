@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/debt_entry.dart';
 import '../providers/expense_provider.dart';
 import '../widgets/undo_snackbar.dart';
+import '../services/money_format.dart';
 
 /// Money lent to / borrowed from friends. Kept separate from expenses and
 /// income so it never changes your spending totals.
@@ -53,7 +54,7 @@ class LentBorrowedScreen extends StatelessWidget {
                   Expanded(
                     child: _SummaryCard(
                       label: 'You\'ll get',
-                      amount: '$currency${provider.totalOwedToYou.toStringAsFixed(0)}',
+                      amount: '$currency${formatAmount(provider.totalOwedToYou, 0)}',
                       color: Colors.green,
                     ),
                   ),
@@ -61,7 +62,7 @@ class LentBorrowedScreen extends StatelessWidget {
                   Expanded(
                     child: _SummaryCard(
                       label: 'You owe',
-                      amount: '$currency${provider.totalYouOwe.toStringAsFixed(0)}',
+                      amount: '$currency${formatAmount(provider.totalYouOwe, 0)}',
                       color: Colors.redAccent,
                     ),
                   ),
@@ -111,8 +112,8 @@ class LentBorrowedScreen extends StatelessWidget {
                             ),
                             Text(
                               b.value > 0
-                                  ? 'owes you $currency${b.value.toStringAsFixed(0)}'
-                                  : 'you owe $currency${(-b.value).toStringAsFixed(0)}',
+                                  ? 'owes you $currency${formatAmount(b.value, 0)}'
+                                  : 'you owe $currency${formatAmount((-b.value), 0)}',
                               style: TextStyle(
                                 color: b.value > 0
                                     ? Colors.green
@@ -225,7 +226,7 @@ class _DebtTile extends StatelessWidget {
   /// Settling asks whether to log the money that changed hands.
   Future<void> _settle(BuildContext context, ExpenseProvider provider) async {
     final currency = provider.currency;
-    final amount = '$currency${entry.amount.toStringAsFixed(0)}';
+    final amount = '$currency${formatAmount(entry.amount, 0)}';
     final primary = Theme.of(context).colorScheme.primary;
     final choice = await showModalBottomSheet<bool>(
       context: context,
@@ -375,7 +376,7 @@ class _DebtTile extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  '$currency${entry.amount.toStringAsFixed(0)}',
+                  '$currency${formatAmount(entry.amount, 0)}',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -471,16 +472,33 @@ class _DebtFormSheetState extends State<DebtFormSheet> {
   }
 
   Future<void> _pickDate() async {
+    // The range always includes the entry's own date (an old entry from a
+    // restored backup can be from before 2020; the picker asserts on that).
+    final first = DateTime(2020);
+    final last = DateTime.now().add(const Duration(days: 365));
     final picked = await showDatePicker(
       context: context,
       initialDate: _date,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      firstDate: _date.isBefore(first) ? _date : first,
+      lastDate: _date.isAfter(last) ? _date : last,
     );
     if (picked != null) setState(() => _date = picked);
   }
 
+  bool _saving = false;
+
+  /// One save at a time: a quick double tap used to add the entry twice.
   Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await _doSave();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _doSave() async {
     if (!_formKey.currentState!.validate()) return;
     final provider = context.read<ExpenseProvider>();
     final navigator = Navigator.of(context);
@@ -630,7 +648,7 @@ class _DebtFormSheetState extends State<DebtFormSheet> {
               ),
               const SizedBox(height: 8),
               ElevatedButton(
-                onPressed: _save,
+                onPressed: _saving ? null : _save,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),

@@ -1,6 +1,7 @@
 ﻿import '../../models/expense_models.dart';
 import '../../services/notification_service.dart';
 import '../../services/app_prefs.dart';
+import '../../services/money_format.dart';
 
 class NotificationManager {
   Future<void> triggerExpenseNotifications({
@@ -27,14 +28,23 @@ class NotificationManager {
     try {
       // Optional large-payment alert: only for fresh payments (logged
       // today), not back-dated entries or imported history.
-      final limit = AppPrefs.instance.largePaymentAlert;
+      final prefs = AppPrefs.instance;
+      final limit = prefs.largePaymentAlert;
       final today = DateTime.now();
+      bool sameDay(DateTime a, DateTime b) =>
+          a.year == b.year && a.month == b.month && a.day == b.day;
+      final yesterday = DateTime(today.year, today.month, today.day - 1);
+      final fresh = sameDay(expense.date, today) ||
+          // "Late night counts as yesterday": a payment at 1 AM is dated
+          // yesterday but was just made.
+          (prefs.lateNightIsYesterday &&
+              sameDay(expense.date, yesterday) &&
+              sameDay(expense.createdAt, today) &&
+              expense.createdAt.hour < AppPrefs.lateNightCutoffHour);
       if (checkLargePayment &&
           limit != null &&
           expense.amount >= limit &&
-          expense.date.year == today.year &&
-          expense.date.month == today.month &&
-          expense.date.day == today.day) {
+          fresh) {
         await NotificationService.showLargePayment(
             expense.description, expense.amount);
       }
@@ -68,7 +78,7 @@ class NotificationManager {
             _crossed(monthlySpent, monthAdded, monthlyIncome * 0.8)) {
           await NotificationService.showNearLimit(
             '80% of this month\'s income spent',
-            '₹${(monthlyIncome - monthlySpent).toStringAsFixed(0)} left for the rest of the month.',
+            '₹${formatAmount((monthlyIncome - monthlySpent), 0)} left for the rest of the month.',
           );
         }
         if (categoryBudget > 0 &&
@@ -76,7 +86,7 @@ class NotificationManager {
             _crossed(categorySpent, added, categoryBudget * 0.8)) {
           await NotificationService.showNearLimit(
             '${expense.category}: 80% of limit used',
-            '₹${(categoryBudget - categorySpent).toStringAsFixed(0)} left of your ₹${categoryBudget.toStringAsFixed(0)} ${expense.category} limit.',
+            '₹${formatAmount((categoryBudget - categorySpent), 0)} left of your ₹${formatAmount(categoryBudget, 0)} ${expense.category} limit.',
           );
         }
       }

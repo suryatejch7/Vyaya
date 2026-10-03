@@ -31,10 +31,10 @@ class UndoState {
 
 /// App-wide undo, shown by [UndoHost] (lib/widgets/undo_bar.dart).
 ///
-/// - The first action shows the full bar ("Dismissed Swiggy · UNDO").
-/// - Another action while it's still up shrinks it into a small bubble with
-///   a countdown ring and a count, so a run of dismissals doesn't keep a bar
-///   on screen. Tap the bubble to open it again.
+/// - Every action shows a small bubble with a countdown ring (and a count
+///   when there are several). Tap it to open the full bar
+///   ("Dismissed Swiggy · UNDO").
+/// - A new action while the bar is open tucks it back into the bubble.
 /// - Nothing is lost: every action stays undoable (latest first, or all at
 ///   once) until 5 seconds after the last one.
 class UndoController {
@@ -66,8 +66,8 @@ class UndoController {
   static void show(String message, FutureOr<void> Function() onUndo) {
     final s = state.value;
     final items = [...s.items, UndoRequest(++_seq, message, onUndo)];
-    // Second action in a row: tuck the bar away into the bubble.
-    _set(items, items.length > 1);
+    // Always starts as the small bubble; tap it to open the bar.
+    _set(items, true);
   }
 
   /// Bubble tapped: open the bar, with a fresh 5 seconds to decide.

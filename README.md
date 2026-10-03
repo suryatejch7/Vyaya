@@ -12,10 +12,11 @@ It's built around a simple idea: **you log the money that comes in, you log the 
 
 ### Logging money
 - **Add an expense by hand:** payee, amount, purpose, category, date, account and notes. Tap the **+** button on the home screen.
-- **Toggle Auto Detect Payments:** reads incoming bank & app notifications and messages to automatically log payments. Toggled in Settings.
+- **Auto-detect payments:** reads bank SMS and payment-app notifications (GPay, PhonePe, Paytm…) on your phone and turns them into entries for you. See [Auto-detect](#auto-detect-payments) below.
 - **Log income:** pocket money, salary, refunds, anything coming in. Income is shown in green throughout the app.
-- **Edit or delete anything:** tap an entry to edit it. Deleting shows an **UNDO** button for a few seconds, in case your thumb slipped.
-- **Delete several at once:** long-press an entry to start selecting, tap more, then delete from the nav bar.
+- **Edit or delete anything:** tap an entry to edit it. Every change shows a small round **undo** bubble for 5 seconds; tap it to see what changed and undo it (one at a time, or all at once).
+- **Select several at once:** long-press an entry, tap more, then use the nav bar to **Edit** (change category, account or date for all of them) or **Delete**. Both can be undone.
+- **Amounts in Indian format:** rupees only, grouped as thousands, lakhs and crores (₹1,23,45,678). Charts use K / L / Cr.
 
 ### Knowing where you stand
 - **The top card on the home screen** shows what you've spent this month, your income, and how much is **left** (income − spent), with a progress bar.
@@ -26,7 +27,11 @@ It's built around a simple idea: **you log the money that comes in, you log the 
 
 ### Things that happen on their own
 - **Recurring entries:** set up things that repeat every month once, like pocket money on the 1st or Spotify on the 5th, and Vyaya logs them automatically when their day comes. You can pause, edit or delete them anytime. If you don't open the app for a while, it catches up with anything you missed.
-- **Month-end savings:** when a month ends with money left over, that leftover is logged into a **"Saved"** category on the last day of the month. The category is created for you if it doesn't exist. Over time, this shows you how much you've actually saved each month.
+- **Month-end leftover:** when a month ends with money left over, Vyaya does one of two things (Settings → Optional features):
+  - **Save it** (default): logs it as an expense in a **"Saved"** category on the month's last day, so it shows how much you actually saved.
+  - **Carry it over:** adds it as income on the 1st of the next month ("Carried over from …").
+
+  Either entry updates itself if you later add or edit something in that month, and stays deleted if you delete it. Its date is fixed, and a month's own carried-over income never counts towards that month.
 - **Notifications:** choose exactly which ones you get in **Settings → Notifications**: spending more than your income, a category going over its limit, early warnings at 80%, large payments, "new payment detected", bill reminders, a weekly summary, a monthly recap and a daily reminder (skipped on days you've already logged something). One switch turns them all off, and there's a test button.
 
 ### Money with friends
@@ -40,13 +45,26 @@ It's built around a simple idea: **you log the money that comes in, you log the 
 
 ### Your data
 - **Everything is stored on your phone.** There's no account, no server and no sync. Nothing leaves your device unless you share it.
-- **Backup & Restore:** exports a single JSON file with everything (expenses, income, categories, accounts, recurring entries, lent/borrowed) that you can save to Drive or wherever you like, and restore later.
+- **Backup & Restore:** exports a single JSON file with everything (expenses, income, categories, accounts, recurring entries, lent/borrowed, detected payments and your "always ignore" rules) that you can save to Drive or wherever you like. Restoring asks first, checks the file isn't damaged before touching anything, and puts your old data back if it fails.
+- **Delete data by date:** Settings → Delete data by date removes expenses, income and/or detected payments in a period you pick, with an extra confirmation.
+- **If stored data can't be opened at start-up,** the app shows a screen with *Try again*, *Save a copy of my data* and *Restore backup* instead of a blank spinner. A single unreadable entry is skipped (not deleted), and month-end entries are left alone until it's fixed.
 - **Export to CSV:** a spreadsheet of all expenses and income, handy for Excel or Google Sheets. It's export-only and can't be imported back.
-- **Automatic safety copy:** the app also keeps a copy of your data that's included in Android's own backup, so a reinstall can bring your data back even if you forgot to make a backup yourself.
+- **Automatic safety copy:** the app also keeps a copy of your data in its own storage, used to recover if the app's settings storage gets wiped. It stays on the phone only (Android's cloud backup is turned off, since Vyaya is fully offline), so **uninstalling the app or clearing its storage deletes it too**. Before reinstalling or changing phones, use Settings → Back up and keep the file somewhere safe.
 
 ---
 
-## How Auto Detect decides what to log
+## Auto-detect payments
+
+Turn it on in **Settings → Auto-detect Payments** by giving Vyaya notification access, SMS permission, or both. Everything is read on the phone; nothing is uploaded.
+
+- **Review list (Detected payments):** found payments wait here. Swipe or tap to add or dismiss, pick the category, or use **Add all** / **Dismiss all**. **Add automatically** skips the review for confident live payments (never for imports, transfers, card-bill payments, refunds or messages with links).
+- **One payment, one entry:** the app alert and the bank SMS for the same payment are merged, repeats of the same message are folded in, and two real payments of the same amount stay separate (different reference numbers, payees or card digits). A payment you already typed in by hand is marked "already logged" instead (one manual entry matches only one payment).
+- **Always ignore:** mute a payee or a sender so it's never shown again; rules can be removed anytime.
+- **Import past bank SMS:** pick a start date; everything since then is read and waits for review.
+- **Nothing missed:** if Android stopped the app (battery savers), SMS that arrived meanwhile are read from the inbox the next time you open it (up to 30 days back). Payments you removed don't come back this way, only through a manual import.
+- **Remove:** clears items from the lists (the expenses they created stay).
+
+### How it decides what to log
 
 Bank SMS in India are messy: every bank writes them differently, half of them end with an ad, and scammers copy the exact format of real alerts. So before anything gets logged, each message goes through a few checks, all on your phone:
 
@@ -64,7 +82,7 @@ The parser has been checked against **30,000+ messages** so far, and every mista
 
 | What | Messages | Result |
 |---|---:|---|
-| Unit tests (`test/transaction_parser_test.dart`) | 204 | All passing |
+| Unit tests (`test/transaction_parser_test.dart`) | 231 | All passing |
 | Hand-collected real bank / UPI message formats (development + holdout set) | 126 | All correct |
 | Sample messages from two open-source Indian SMS parser projects | 365 | 356 handled correctly; the other 9 are edge cases handled differently on purpose (e.g. deposit interest is logged as income) |
 | Indian spam & ham SMS dataset | 2,267 | 0 spam logged |
@@ -93,7 +111,10 @@ Some features are hidden behind gestures, so here's the cheat sheet:
 | Home | Tap **+** | Add expense, add income |
 | Home | ◀ ▶ next to the month | Look at previous months |
 | Home | Tap "Recent Activity" | Switch to the credit card view |
-| Any entry | Tap / ⋮ menu / long-press | Edit / delete (with undo) / select several |
+| Any entry | Tap / ⋮ menu / long-press | Edit / delete / select several |
+| While selecting | Nav bar **Edit** / **Delete** | Change category, account or date for all / delete all |
+| Undo bubble | Tap it | Shows what changed, with UNDO (and "Undo all" for several) |
+| Home | Tap the detected-payments banner | Review auto-detected payments |
 | Settings → Categories | Long-press a category | Select several to delete |
 
 The little line on top of the nav bar is there to remind you that it swipes up.
@@ -145,19 +166,22 @@ flutter build apk --release
 ```bash
 flutter test
 ```
+Tests cover the SMS parser (231 cases), duplicate detection (`capture_dedupe_test`), money logic such as savings, carry-over, recurring, lent/borrowed and batch delete (`expense_provider_test`), storage (`local_store_test`), Indian number formatting (`money_format_test`), payee categories, settings, smart notifications and the undo bar.
 
 The APK ends up in `build/app/outputs/flutter-apk/app-release.apk`.
 
 **Build setup:** Gradle 8.14.3, Android Gradle Plugin 8.11.1, Kotlin 2.2.20. `receive_sharing_intent` is pinned to 1.8.1, because 1.9.0 needs AGP 9 and compile SDK 37.
 
-**Signing:** release builds use `android/key.properties` if it exists (see `key.properties.example`), and fall back to the debug key if it doesn't.
+**Signing:** release builds read **`android/app/key.properties`** (the build looks in `android/app/`, not `android/`; `storeFile` is relative to `android/app/` too). See `key.properties.example`. If the file is missing, the build silently falls back to the **debug key**, and an APK signed that way can't be updated by one signed with your real key, so check it's there before publishing.
 
 ---
 
 ## Under the hood
 
 - **Flutter + Provider** for the UI and app state
-- **SharedPreferences** for storage. It's all local; the class is still called `ExpenseSupabaseService` from back when the app used Supabase.
+- **SharedPreferences** for storage (`LocalStore`), with writes batched every 300 ms. App data keys start with `ls_` (these go into backups); `device_` keys belong to this phone only.
+- **`packages/vyaya_capture`**, a small built-in plugin (Kotlin) that reads notifications and SMS into a queue the app drains, so nothing is lost while the app is closed
+- **intl** for Indian number formatting
 <!-- - **Google ML Kit** text recognition for OCR, with image pre-processing (cropping and clean-up) and text normalisation before the fields are pulled out -->
 - **flutter_local_notifications** for alerts
 - **receive_sharing_intent** for the share-to-app flow
@@ -167,7 +191,7 @@ The APK ends up in `build/app/outputs/flutter-apk/app-release.apk`.
 lib/
 ├── models/      Expense, Income, categories, recurring entries, lent/borrowed
 ├── providers/   ExpenseProvider (the hub) + managers for expenses, income, budgets…
-├── services/    storage, OCR pipeline, backup/export, notifications, intents
+├── services/    storage, payment detection (capture/), backup/export, notifications, intents, OCR (unused)
 ├── screens/     home, categories, analytics, settings, recurring, lent & borrowed…
 └── widgets/     cards, glass nav bar, category summary, charts
 ```
@@ -178,8 +202,9 @@ lib/
 
 <!-- - Only PhonePe screenshots can be scanned automatically for now. -->
 - Automatic entries (recurring and month-end savings) are created when you open or return to the app, not in the background. If you don't open it on the 1st, they appear the next time you do, with the correct dates.
-- It's Android only.
-- It's India specific.
+- Auto-detect only knows Indian bank / UPI message formats in English and romanised Indian languages (Hinglish etc.); messages in native scripts aren't read.
+- Distributing on the Play Store would need Google's approval for the SMS permission; GitHub / F-Droid builds don't.
+- It's Android only, and India only (rupees).
 
 <!-- ## What's next
 

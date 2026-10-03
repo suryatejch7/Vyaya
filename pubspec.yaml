@@ -34,7 +34,6 @@ dependencies:
   # UI and state management
   cupertino_icons: ^1.0.8
   provider: ^6.1.1
-  lottie: ^3.1.2
 
   # Export / backup files (share sheet + file picker for restore)
   share_plus: ^10.0.0
@@ -80,10 +79,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-
-  # Assets
-  assets:
-    - assets/animations/splash.json
 
 flutter_launcher_icons:
   android: true

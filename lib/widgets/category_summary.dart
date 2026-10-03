@@ -4,6 +4,7 @@ import '../providers/expense_provider.dart';
 import '../models/expense_models.dart';
 import '../screens/categories_screen.dart';
 import '../services/app_prefs.dart';
+import '../services/money_format.dart';
 
 class CategorySummary extends StatefulWidget {
   const CategorySummary({super.key});
@@ -29,7 +30,6 @@ class _CategorySummaryState extends State<CategorySummary> {
         // Use current month data instead of all-time
         final categoryTotals = expenseProvider.viewMonthCategoryTotals;
         final categories = expenseProvider.categories;
-        final currentMonthTotal = expenseProvider.viewMonthTotalExpense;
         final currency = expenseProvider.currency;
 
         if (categoryTotals.isEmpty) {
@@ -63,11 +63,15 @@ class _CategorySummaryState extends State<CategorySummary> {
                 itemBuilder: (context, index) {
                   final categoryName = categoryTotals.keys.elementAt(index);
                   final amount = categoryTotals[categoryName]!;
-                  final percentage = currentMonthTotal > 0 ? (amount / currentMonthTotal * 100) : 0.0;
                   // Category limits apply to the current month only.
                   final isOverBudget = expenseProvider.isViewingCurrentMonth &&
                       expenseProvider.isCategoryOverBudget(categoryName);
-                  final budget = expenseProvider.getCategoryBudget(categoryName);
+                  final budget = expenseProvider.isViewingCurrentMonth
+                      ? expenseProvider.getCategoryBudget(categoryName)
+                      : 0.0;
+                  // How much of the category's monthly limit is used (it
+                  // used to show the share of all spending instead).
+                  final usedOfLimit = budget > 0 ? amount / budget * 100 : 0.0;
 
                   // Find the category object
                   final category = categories.firstWhere(
@@ -154,7 +158,7 @@ class _CategorySummaryState extends State<CategorySummary> {
                           Text(
                             AppPrefs.instance.hideHomeTotals
                                 ? '$currency••••'
-                                : '$currency${amount.toStringAsFixed(0)}',
+                                : '$currency${formatAmount(amount, 0)}',
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.bold,
@@ -163,7 +167,7 @@ class _CategorySummaryState extends State<CategorySummary> {
                           ),
                           if (budget > 0)
                             Text(
-                              '${percentage.toStringAsFixed(0)}%',
+                              '${usedOfLimit.toStringAsFixed(0)}% of limit',
                               style: TextStyle(
                                 fontSize: 9,
                                 color: isOverBudget ? Colors.red : Colors.white60,

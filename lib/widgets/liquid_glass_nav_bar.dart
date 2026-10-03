@@ -4,6 +4,7 @@ import 'package:vector_math/vector_math_64.dart' as vmath;
 import '../models/quick_action_item.dart';
 import '../widgets/glass_bottom_sheet.dart';
 import 'undo_snackbar.dart';
+import 'undo_bar.dart' show glassBarScale;
 import '../screens/search_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/analytics_screen.dart';
@@ -21,6 +22,7 @@ class GlassNavBar extends StatefulWidget {
   final int selectedCount;
   final VoidCallback? onClearSelection;
   final VoidCallback? onDeleteSelected;
+  final VoidCallback? onEditSelected;
 
   const GlassNavBar({
     super.key,
@@ -30,6 +32,7 @@ class GlassNavBar extends StatefulWidget {
     this.selectedCount = 0,
     this.onClearSelection,
     this.onDeleteSelected,
+    this.onEditSelected,
   });
 
   @override
@@ -265,7 +268,8 @@ class _GlassNavBarState extends State<GlassNavBar>
           builder: (context, child) {
             return Transform.scale(
               alignment: Alignment.centerLeft, // keep the left edge fixed
-              scale: _scaleAnimation.value * 0.9, // Scale down the nav bar
+              // Scaled down (more on narrow phones, see glassBarScale).
+              scale: _scaleAnimation.value * glassBarScale(context),
               child: GestureDetector(
                 onHorizontalDragEnd: _handleHorizontalSwipe,
                 // Swipe up anywhere on the bar -> quick actions sheet
@@ -343,6 +347,11 @@ class _GlassNavBarState extends State<GlassNavBar>
                                   onTap: widget.onClearSelection,
                                 ),
                                 _buildSelectionCount(),
+                                _buildSelectionNavItem(
+                                  icon: Icons.edit_rounded,
+                                  label: 'Edit',
+                                  onTap: widget.onEditSelected,
+                                ),
                                 _buildSelectionNavItem(
                                   icon: Icons.delete_rounded,
                                   label: 'Delete',
@@ -510,7 +519,7 @@ class _GlassNavBarState extends State<GlassNavBar>
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 80,
+        width: 62,
         height: 50,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(25),
@@ -537,7 +546,7 @@ class _GlassNavBarState extends State<GlassNavBar>
 
   Widget _buildSelectionCount() {
     return Container(
-      width: 80,
+      width: 62,
       height: 50,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(25),

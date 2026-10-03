@@ -20,6 +20,7 @@ import '../services/app_prefs.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:url_launcher/url_launcher.dart';
+import '../services/money_format.dart';
 
 /// Settings is a hub page; heavier sections open as their own pages that
 /// reuse the same state class (so dialogs/helpers are shared).
@@ -843,8 +844,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   // Budget info
                                   Text(
                                     budget > 0
-                                        ? '₹${spent.toStringAsFixed(0)} / ₹${budget.toStringAsFixed(0)}'
-                                        : '₹${spent.toStringAsFixed(0)} spent',
+                                        ? '₹${formatAmount(spent, 0)} / ₹${formatAmount(budget, 0)}'
+                                        : '₹${formatAmount(spent, 0)} spent',
                                     style: TextStyle(
                                       color: isOverBudget ? Colors.red : Colors.grey,
                                       fontSize: 12,
@@ -1961,6 +1962,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         TextEditingController(text: editing?.name ?? '');
     AccountType selectedType = editing?.type ?? AccountType.savings;
     String? nameError;
+    var saving = false; // a double tap mustn't add the account twice
     // "Current" isn't offered any more; keep it only for an account that
     // already uses it.
     final types = AccountType.values
@@ -2090,10 +2092,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             ElevatedButton(
               onPressed: () async {
+                if (saving) return;
                 final name = accountNameController.text.trim();
                 final navigator = Navigator.of(context);
                 final scaffoldMessenger = ScaffoldMessenger.of(context);
                 final provider = context.read<ExpenseProvider>();
+                // Read now: this dialog's context is gone once it closes.
+                final primary = Theme.of(context).colorScheme.primary;
                 if (name.isEmpty) {
                   setDialogState(() => nameError = 'Enter a name');
                   return;
@@ -2104,33 +2109,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   setDialogState(() => nameError = 'You already have "$name"');
                   return;
                 }
-                if (editing != null) {
-                  await provider.updateAccount(
-                      editing.copyWith(name: name, type: selectedType));
+                saving = true;
+                try {
+                  if (editing != null) {
+                    await provider.updateAccount(
+                        editing.copyWith(name: name, type: selectedType));
+                    navigator.pop();
+                    scaffoldMessenger.showSnackBar(SnackBar(
+                      content: Text('Saved "$name"'),
+                      duration: const Duration(seconds: 1),
+                    ));
+                    return;
+                  }
+
+                  final newAccount = BankAccount(
+                    id: DateTime.now().millisecondsSinceEpoch.toString(),
+                    name: name,
+                    isDefault: provider.accounts.isEmpty,
+                    type: selectedType,
+                  );
+
+                  await provider.addAccount(newAccount);
                   navigator.pop();
+                } catch (e) {
+                  saving = false;
                   scaffoldMessenger.showSnackBar(SnackBar(
-                    content: Text('Saved "$name"'),
-                    duration: const Duration(seconds: 1),
+                    content: Text('Couldn\'t save the account: $e'),
                   ));
                   return;
                 }
-
-                final newAccount = BankAccount(
-                  id: DateTime.now().millisecondsSinceEpoch.toString(),
-                  name: name,
-                  isDefault: provider.accounts.isEmpty,
-                  type: selectedType,
-                );
-
-                await provider.addAccount(newAccount);
-                navigator.pop();
 
                 if (mounted) {
                   scaffoldMessenger.showSnackBar(
                     SnackBar(
                       content: Text(
                           '${selectedType.label} "$name" added successfully!'),
-                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      backgroundColor: primary,
                       duration: const Duration(seconds: 1),
                     ),
                   );
@@ -2345,6 +2359,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Shown only while Android itself blocks Vyaya's notifications.
+        if (all) const _SystemNotificationsBanner(),
         _group([
           _row(
             icon: all
@@ -2358,13 +2374,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             chevron: false,
             onTap: () async {
               await NotificationService.setNotificationsEnabled(!all);
-              setState(() {});
+              if (mounted) setState(() {});
             },
             trailing: Switch(
               value: all,
               onChanged: (v) async {
                 await NotificationService.setNotificationsEnabled(v);
-                setState(() {});
+                if (mounted) setState(() {});
               },
             ),
           ),
@@ -2418,7 +2434,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: 'Large payment alert',
             subtitle: p.largePaymentAlert == null
                 ? 'A single payment above an amount you pick (your bank may already alert you)'
-                : 'For payments of ₹${p.largePaymentAlert!.toStringAsFixed(0)} or more · tap to change',
+                : 'For payments of ₹${formatAmount(p.largePaymentAlert!, 0)} or more · tap to change',
             chevron: false,
             onTap: () => _editAmountPref(
               title: 'Large payment alert',
@@ -2694,7 +2710,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: 'Monthly savings goal',
                   subtitle: prefs.savingsGoal == null
                       ? 'Track how much you want left each month'
-                      : '₹${prefs.savingsGoal!.toStringAsFixed(0)} a month · shown in Savings',
+                      : '₹${formatAmount(prefs.savingsGoal!, 0)} a month · shown in Savings',
                   onTap: () => _editAmountPref(
                     title: 'Monthly savings goal',
                     hint: 'How much you want left at month end',
@@ -3993,6 +4009,94 @@ class _TypeToConfirmDialogState extends State<_TypeToConfirmDialog> {
           child: const Text('Delete'),
         ),
       ],
+    );
+  }
+}
+
+/// "Android is blocking Vyaya's notifications" with a button to allow them.
+/// Checks again whenever you come back to the app (e.g. from system
+/// settings), and hides itself once they're allowed.
+class _SystemNotificationsBanner extends StatefulWidget {
+  const _SystemNotificationsBanner();
+
+  @override
+  State<_SystemNotificationsBanner> createState() =>
+      _SystemNotificationsBannerState();
+}
+
+class _SystemNotificationsBannerState extends State<_SystemNotificationsBanner>
+    with WidgetsBindingObserver {
+  bool _blocked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _check();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _check();
+  }
+
+  Future<void> _check() async {
+    final allowed = await NotificationService.systemAllowed();
+    if (mounted && _blocked == allowed) setState(() => _blocked = !allowed);
+  }
+
+  Future<void> _allow() async {
+    final cap = context.read<CaptureProvider>();
+    final allowed = await NotificationService.requestPermission();
+    // Android stops showing its prompt after it's been declined; the
+    // switch is then on the app's info page.
+    if (!allowed) await cap.openAppDetails();
+    await _check();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_blocked) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 8),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.notifications_off_rounded,
+                  color: Colors.orange, size: 20),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Android is blocking Vyaya\'s notifications, so none of the ones below can show.',
+                  style: TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _allow,
+              child: const Text('Allow notifications'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

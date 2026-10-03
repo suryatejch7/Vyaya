@@ -32,7 +32,6 @@ class ExpenseProvider extends ChangeNotifier {
 
   int _userId = 0;
   String _userName = '';
-  String _currency = '₹';
 
   bool _isLoading = false;
   bool _isInitialized = false;
@@ -43,7 +42,9 @@ class ExpenseProvider extends ChangeNotifier {
   List<BankAccount> get accounts => _accountManager.accounts;
   int get userId => _userId;
   String get userName => _userName;
-  String get currency => _currency;
+  /// Always rupees: Vyaya is for India only (an old setting or backup
+  /// with another symbol is ignored).
+  String get currency => '₹';
   bool get isLoading => _isLoading;
   String get searchQuery => _searchQuery;
   bool get isInitialized => _isInitialized;
@@ -56,7 +57,6 @@ class ExpenseProvider extends ChangeNotifier {
       int userId, String userName, UserSettings userSettings) async {
     _userId = userId;
     _userName = userName;
-    _currency = userSettings.currency;
 
     _budgetManager.initialize(userSettings.categoryBudgets);
     _customCategories.clear();
@@ -82,7 +82,6 @@ class ExpenseProvider extends ChangeNotifier {
   void clearUserData() {
     _userId = 0;
     _userName = '';
-    _currency = '₹';
     _budgetManager.clear();
     _customCategories.clear();
     _accountManager.clear();
@@ -114,7 +113,6 @@ class ExpenseProvider extends ChangeNotifier {
       final userSettings =
           await LocalStore.getUserSettings(userId: _userId);
       _budgetManager.initialize(userSettings.categoryBudgets);
-      _currency = userSettings.currency;
       _customCategories.clear();
       _customCategories.addAll(userSettings.customCategories);
       _accountManager.initialize(userSettings.accounts);
@@ -212,6 +210,40 @@ class ExpenseProvider extends ChangeNotifier {
   String categoryBucket(String name) =>
       _customCategories.any((c) => c.name == name) ? name : 'Other';
 
+  /// [categoryBucket] for many expenses: looks names up in a set made once.
+  String Function(String) _bucketer() {
+    final names = {for (final c in _customCategories) c.name};
+    return (name) => names.contains(name) ? name : 'Other';
+  }
+
+  // This month's spending per category, worked out once and reused until
+  // an expense, a category name or the month changes (budget cards ask for
+  // every category on every rebuild).
+  Map<String, double>? _monthByCategory;
+  Object? _monthByCategoryKey;
+
+  Map<String, double> _currentMonthByCategory() {
+    final now = DateTime.now();
+    final key = (
+      _expenseManager.revision,
+      now.year,
+      now.month,
+      Object.hashAll(_customCategories.map((c) => c.name)),
+    );
+    final cached = _monthByCategory;
+    if (cached != null && _monthByCategoryKey == key) return cached;
+    final bucket = _bucketer();
+    final totals = <String, double>{};
+    for (final e in _expenseManager.expenses) {
+      if (e.date.year != now.year || e.date.month != now.month) continue;
+      final k = bucket(e.category);
+      totals[k] = (totals[k] ?? 0) + e.amount;
+    }
+    _monthByCategory = totals;
+    _monthByCategoryKey = key;
+    return totals;
+  }
+
   Map<String, double> get categoryTotals {
     Map<String, double> totals = {};
     for (var expense in _expenseManager.expenses) {
@@ -239,14 +271,8 @@ class ExpenseProvider extends ChangeNotifier {
     return currentMonthExpenses.fold(0, (sum, expense) => sum + expense.amount);
   }
 
-  Map<String, double> get currentMonthCategoryTotals {
-    Map<String, double> totals = {};
-    for (var expense in currentMonthExpenses) {
-      final key = categoryBucket(expense.category);
-      totals[key] = (totals[key] ?? 0) + expense.amount;
-    }
-    return totals;
-  }
+  Map<String, double> get currentMonthCategoryTotals =>
+      Map.of(_currentMonthByCategory());
 
   List<Expense> getCurrentMonthExpensesByCategory(String category) {
     return currentMonthExpenses
@@ -254,11 +280,8 @@ class ExpenseProvider extends ChangeNotifier {
         .toList();
   }
 
-  double getCurrentMonthCategoryExpenses(String category) {
-    return currentMonthExpenses
-        .where((expense) => categoryBucket(expense.category) == category)
-        .fold(0.0, (sum, expense) => sum + expense.amount);
-  }
+  double getCurrentMonthCategoryExpenses(String category) =>
+      _currentMonthByCategory()[category] ?? 0.0;
 
   /// True if [d] falls in [period]. Calendar based with whole-day edges:
   /// the week follows the Sunday/Monday setting, and a custom range covers
@@ -310,16 +333,40 @@ class ExpenseProvider extends ChangeNotifier {
 
   Map<String, double> getCategoryTotalsByPeriod(FilterPeriod period,
       {DateTime? customStart, DateTime? customEnd, String? accountId}) {
+    return periodSummary(period,
+            customStart: customStart,
+            customEnd: customEnd,
+            accountId: accountId)
+        .totals;
+  }
+
+  /// Spending in [period] in one pass: per-category totals and counts, and
+  /// the overall total and count (the Categories screen shows all four).
+  ({
+    Map<String, double> totals,
+    Map<String, int> counts,
+    double total,
+    int count,
+  }) periodSummary(FilterPeriod period,
+      {DateTime? customStart, DateTime? customEnd, String? accountId}) {
+    final bucket = _bucketer();
+    final totals = <String, double>{};
+    final counts = <String, int>{};
+    var total = 0.0;
     final expenses = getExpensesByPeriodType(period,
-        customStart: customStart,
-        customEnd: customEnd,
-        accountId: accountId);
-    Map<String, double> totals = {};
-    for (var expense in expenses) {
-      final key = categoryBucket(expense.category);
-      totals[key] = (totals[key] ?? 0) + expense.amount;
+        customStart: customStart, customEnd: customEnd, accountId: accountId);
+    for (final e in expenses) {
+      final key = bucket(e.category);
+      totals[key] = (totals[key] ?? 0) + e.amount;
+      counts[key] = (counts[key] ?? 0) + 1;
+      total += e.amount;
     }
-    return totals;
+    return (
+      totals: totals,
+      counts: counts,
+      total: total,
+      count: expenses.length,
+    );
   }
 
   List<Expense> getExpensesByCategoryAndPeriod(
@@ -435,6 +482,26 @@ class ExpenseProvider extends ChangeNotifier {
     }
   }
 
+  /// Edits several entries at once (multi-select "Edit"): one savings
+  /// re-check and one refresh. Also used to undo such an edit.
+  Future<void> updateMany(
+      {List<Expense> expenses = const [],
+      List<Income> incomes = const []}) async {
+    if (expenses.isEmpty && incomes.isEmpty) return;
+    try {
+      for (final e in expenses) {
+        await _expenseManager.updateExpense(e, _userId);
+      }
+      for (final i in incomes) {
+        await _incomeManager.updateIncome(i, _userId);
+      }
+      await _resyncSavings();
+      _refreshCalculations();
+    } finally {
+      notifyListeners();
+    }
+  }
+
   Future<void> updateIncome(Income income) async {
     try {
       _isLoading = true;
@@ -461,20 +528,22 @@ class ExpenseProvider extends ChangeNotifier {
       notifyListeners();
       final skipped = _skippedSavingsMonths;
       final skippedBefore = skipped.length;
-      for (final id in expenseIds) {
-        final target =
-            _expenseManager.expenses.where((e) => e.id == id).firstOrNull;
-        final month = target == null ? null : _savedMonthOf(target);
+      // One pass over each list (thousands of entries can go at once, e.g.
+      // Delete by date), not one search per entry.
+      final expenseSet = expenseIds.toSet();
+      final incomeSet = incomeIds.toSet();
+      for (final e in _expenseManager.expenses) {
+        if (!expenseSet.contains(e.id)) continue;
+        final month = _savedMonthOf(e);
         if (month != null) skipped.add(month);
-        await _expenseManager.deleteExpense(id, _userId);
       }
-      for (final id in incomeIds) {
-        final target =
-            _incomeManager.incomes.where((i) => i.id == id).firstOrNull;
-        final month = target == null ? null : _carryMonthOf(target);
+      for (final i in _incomeManager.incomes) {
+        if (!incomeSet.contains(i.id)) continue;
+        final month = _carryMonthOf(i);
         if (month != null) skipped.add(month);
-        await _incomeManager.deleteIncome(id, _userId);
       }
+      await _expenseManager.deleteMany(expenseSet, _userId);
+      await _incomeManager.deleteMany(incomeSet, _userId);
       if (skipped.length != skippedBefore) {
         await _setSkippedSavingsMonths(skipped);
       }
@@ -847,8 +916,9 @@ class ExpenseProvider extends ChangeNotifier {
     for (final e in expenses) {
       final savedMonth = _savedMonthOf(e);
       if (savedMonth != null) skipChanged |= skipped.remove(savedMonth);
-      await _expenseManager.addExpense(e, _userId);
     }
+    // All at once: one write and one sort, however many come back.
+    await _expenseManager.addMany(expenses, _userId);
     if (skipChanged) await _setSkippedSavingsMonths(skipped);
     await _resyncSavings();
     notifyListeners();
@@ -860,8 +930,8 @@ class ExpenseProvider extends ChangeNotifier {
     for (final i in incomes) {
       final carryMonth = _carryMonthOf(i);
       if (carryMonth != null) skipChanged |= skipped.remove(carryMonth);
-      await _incomeManager.addIncome(i, _userId);
     }
+    await _incomeManager.addMany(incomes, _userId);
     if (skipChanged) await _setSkippedSavingsMonths(skipped);
     await _resyncSavings();
     notifyListeners();
@@ -1154,6 +1224,9 @@ class ExpenseProvider extends ChangeNotifier {
   bool _savingsAgain = false;
 
   Future<void> _savingsPass() async {
+    // Some stored entries couldn't be read: leftovers would come out wrong,
+    // so Saved / carried-over entries are left exactly as they are.
+    if (LocalStore.hasUnreadable) return;
     {
       final now = DateTime.now();
       final thisMonth = DateTime(now.year, now.month);
@@ -1269,8 +1342,10 @@ class ExpenseProvider extends ChangeNotifier {
     saveMode ??= monthEndSavingsEnabled;
     bool inMonth(DateTime d) => d.year == m.year && d.month == m.month;
 
+    // A month's own carried-over income never counts towards it (if its
+    // date was moved back into the month, it would keep growing).
     final income = _incomeManager.incomes
-        .where((i) => inMonth(i.date))
+        .where((i) => inMonth(i.date) && i.tag != carryTag)
         .fold(0.0, (sum, i) => sum + i.amount);
     final spent = _expenseManager.expenses
         .where((e) => inMonth(e.date) && !_isAutoSaved(e))
@@ -1367,11 +1442,19 @@ class ExpenseProvider extends ChangeNotifier {
           ),
           _userId,
         );
-      } else if ((existing.amount - left).abs() >= 0.005) {
-        await _incomeManager.updateIncome(
-          existing.copyWith(amount: left, updatedAt: now),
-          _userId,
-        );
+      } else {
+        // Its date is fixed: the 1st of the next month.
+        final day = DateTime(m.year, m.month + 1, 1);
+        final d = existing.date;
+        final dateMoved =
+            d.year != day.year || d.month != day.month || d.day != 1;
+        if (dateMoved || (existing.amount - left).abs() >= 0.005) {
+          await _incomeManager.updateIncome(
+            existing.copyWith(
+                amount: left, date: dateMoved ? day : d, updatedAt: now),
+            _userId,
+          );
+        }
       }
     } else if (existing?.id != null) {
       await _incomeManager.deleteIncome(existing!.id!, _userId);
@@ -1782,11 +1865,8 @@ class ExpenseProvider extends ChangeNotifier {
         .toList();
   }
 
-  double getCategoryExpenses(String category) {
-    return currentMonthExpenses
-        .where((expense) => categoryBucket(expense.category) == category)
-        .fold(0.0, (sum, expense) => sum + expense.amount);
-  }
+  double getCategoryExpenses(String category) =>
+      _currentMonthByCategory()[category] ?? 0.0;
 }
 
 /// One closed month in the Savings screen.

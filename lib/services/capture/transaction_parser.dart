@@ -47,7 +47,7 @@ class ParseResult {
 class TransactionParser {
   TransactionParser._();
 
-  static const _cur = r"(?:rs[.:]?|inr[.:]?|₹)";
+  static const _cur = r"(?:rs[.:]?|inr[.:]?|₹|rupees?\.?)";
   static const _num = r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)";
   static const _amt = r"[0-9][0-9,]*(?:\.[0-9]{1,2})?";
   static const _name = r"([A-Za-z0-9][A-Za-z0-9&.'\-_ ]{1,45})";
@@ -55,8 +55,11 @@ class TransactionParser {
   static RegExp _ci(String p) => RegExp(p, caseSensitive: false);
 
   // ---------------- rejection filters ----------------
+  // Also: "One Time PIN for txn of INR 1500 at X on card XX1234 is 228811"
+  // (the code comes after the payment details), "228811 is the code for
+  // your transaction", "Enter 482913 to authorise txn".
   static final _otp = _ci(
-      r"\b(?:otp|one[\s-]?time\s*password|verification\s*code|security\s*code)\b\W{0,15}(?:is\W{0,5})?\d{4,8}\b|\b\d{4,8}\b\W{0,15}is\s+(?:your|the)\s+(?:otp|one[\s-]?time|verification|security)\b");
+      r"\b(?:otp|one[\s-]?time\s*(?:password|pin|passcode)|verification\s*code|security\s*code)\b\W{0,15}(?:is\W{0,5})?\d{4,8}\b|\b\d{4,8}\b\W{0,15}is\s+(?:your|the)\s+(?:otp|one[\s-]?time|verification|security|code|pin|passcode)\b|(?<!\bshare\s+(?:your\s+|the\s+|this\s+|any\s+)?)\b(?:otp|one[\s-]?time\s*(?:password|pin|passcode))\b(?:\s+(?!(?:avl|avbl|available|bal|balance|lmt|limit|outstanding)\b)(?:[\w/*-]|(?<=\d)[.,](?=\d)|(?<=\b(?:rs|inr))\.)+){1,14}?\s+is\s*:?\s*\d{4,8}\b|\b(?:enter|use)\s+\d{4,8}\s+to\s+(?:authori[sz]e|complete|confirm|verify|approve|validate)\b");
   static final _promo = _ci(
       r"\b(use\s*(?:the\s*)?(?:promo\s*|coupon\s*)?code|promo\s*code|coupon\s*code|pay\s*(?:now|instantly|today)\s*[:\-]|valid\s*for\s*(?:a\s*)?limited|get\s+(?:assured\s+)?(?:up\s*to|upto|flat|extra)\s*(?:₹|rs\.?|inr)|(?:up\s*to|upto)\s*(?:₹|rs\.?|inr)\s*[\d,]+\s*(?:cashback|off|discount|reward)|pre[\s-]?approved|pre[\s-]?qualified|apply\s*now|avail\s*now|claim\s*now|click\s*(here|link|to)|congratulations|good\s*news|hurry|limited\s*(period\s*)?offer|offer\s*valid|lucky\s*draw|coupon|voucher|flat\s*\d+\s*%|\d+\s*%\s*(?:off|cashback|discount)|cashback\s*(upto|up\s*to|of\s*up\s*to|worth|waiting)|reward\s*points\s*worth|eligible\s*for|instant\s*(personal\s*)?loan|loan\s*(of|upto|up\s*to)|limit\s*(has\s*been\s*)?enhanced|enhanced\s*to|upgrade|get\s*(₹|rs\.?|inr)\s*\d+|(?:make|do)\s+your\s+(?:1st|first)\b|and\s+get\b|other\s+benefits|on\s+select\b|on\s*your\s*(first|next)\b|free\b(?!\s+(?:txn|transactions?|atm|withdrawals?))|bonus\b|cash\s*points|t\s*&\s*cs?\b(?!a)|tnc|download\s+(?:now|the\s+app|our\s+app|app|today)\b|join\s+(?:now|today)|sign\s*up|switch\s+to|awaits?\b|avail\s+(?:the|this|it|your|our|an?)\b|(?:ready\s+to|can)\s+be\s+credited|prizes?\b|entry\s+fees?|to\s+activate|enjoy\s+unlimited|only\s+today|today\s+only|flat\s*(?:rs|₹|inr)\.?\s*\d|code\s*:|(?:&|and)\s+get\b|(?:biggest|mega|festive|special|exclusive|best|great|amazing)\s+(?:[a-z]+\s+){0,2}offers?|offers?\s+(?:lapses|ends|expires|valid|on)\b|lapses\b|purchase\s+price|latest\s+price|target\s+price|stop[\s-]?loss|recommended\s+stock)");
   static final _scam = _ci(
@@ -64,12 +67,26 @@ class TransactionParser {
   static final _failed = _ci(
       r"\b(failed|declined|unsuccessful|could\s*not\s*be\s*(processed|completed)|is\s*pending|payment\s*pending|insufficient\s*(funds|balance))\b");
   static final _future = _ci(
-      r"\b(will\s*be\s*(?:auto[\s-]?)?(?:debit(?:ed)?|deduct(?:ed)?|charg(?:ed)?)|scheduled\s*(for|on)|mandate\s*(created|registered|request)|autopay\s*(reminder|setup|set\s*up)|upcoming|reminder|statement\s*(is\s*ready|generated|for)|next\s+emi|ho\s+jaye?ga|ho\s+jaega|hoga|hoil|avvalsundi|aagum|not\s+paid|unpaid|non[\s-]?payment|disconnect\w*|will\s+be\s+cut|power\s+cut|suspend\w*)\b");
+      r"\b(will\s*be\s*(?:auto[\s-]?)?(?:debit(?:ed)?|deduct(?:ed)?|charg(?:ed)?)|pre[\s-]?debit|due\s+for\s+(?:auto[\s-]?)?(?:debit|deduction|payment)|scheduled\s*(for|on)|mandate\s*(created|registered|request)|autopay\s*(reminder|setup|set\s*up)|upcoming|reminder|statement\s*(is\s*ready|generated|for)|next\s+emi|ho\s+jaye?ga|ho\s+jaega|hoga|hoil|avvalsundi|avutundi|aagum|not\s+paid|unpaid|non[\s-]?payment|disconnect\w*|will\s+be\s+cut|power\s+cut|suspend\w*)\b");
   // "Due" only means a bill reminder when no money came in (a refund
   // message can mention the card's revised total due).
   static final _due = _ci(
       r"\b(is\s*due|due\s*(on|date|by|hai|he|aahe|ahe|undi|ide)|minimum\s*(amount\s*)?due|total\s*due|kal\s+tak)\b|\bdue\s*(?:है|हे|आहे|ఉంది|உள்ளது)");
   static final _moneyIn = _ci(r"\b(refund(ed)?|reversed|credited|received)\b");
+  // Money that hasn't arrived yet: "Refund … will be credited in 5-7 days",
+  // "Refund initiated", "Cashback … will be credited". Counting these would
+  // count the money twice once the real credit comes. Only rejected when
+  // nothing in the message has actually moved yet (a salary credit that
+  // adds "interest will be credited quarterly" stays).
+  static final _futureMoney = _ci(
+      r"\b(?:refund|cashback)\b(?:[^.]|\.(?=\d)|(?<=\b(?:rs|inr))\.){0,80}?\b(?:will|shall|would|to)\s+(?:be|get)\s+(?:credited|refunded|reversed|deposited|processed|reflected)\b"
+      r"|\b(?:will|shall|would|to)\s+(?:be|get)\s+(?:credited|refunded|reversed|deposited|transferred|processed|reflected)\b(?!\s+(?:to\s+|in(?:to)?\s+)?(?:the\s+|their\s+)?(?:beneficiary|payee|recipient)\b)"
+      r"|\b(?:will|shall|would|to)\s*(?:not\s+)?be\s*(?:auto[\s-]?|[a-z]+ly\s+)?(?:debit(?:ed)?|deduct(?:ed)?|charg(?:ed)?)\b|\bwon'?t\s+be\s+(?:debited|deducted|charged)\b"
+      r"|\bwill\s+reflect\w*|\brefund\b(?:[^.]|\.(?=\d)|(?<=\b(?:rs|inr))\.){0,60}?\binitiated\b|\binitiated\s+(?:a\s+|the\s+|your\s+)?refund\b"
+      r"|\b(?:have\s+)?received\s+(?:your|the)\s+(?:return|request|order|item|product|pickup)\b");
+  static final _movedNow = _ci(
+      r"\b(credited|debited|deducted|refunded|reversed|received|deposited|spent|paid|sent|withdrawn|transferred|charged)\b"
+      r"|(?<!\b(?:refunds?|return|cashback)\b(?:[^.]|\.(?=\d)|(?<=\b(?:rs|inr))\.){0,60})\b(?:successful(?:ly)?|success|done|completed)\b");
   // "Call 98XXXXXXXX to block/cancel": banks give toll-free 1800/1860
   // numbers, scammers give mobiles.
   static final _scamCall = _ci(
@@ -79,12 +96,14 @@ class TransactionParser {
   static final _request = _ci(
       r"\b(requested\s*(money|₹|rs|inr)|has\s*requested|collect\s*request|payment\s*request|request\s*(of|for)\s*(₹|rs|inr)|is\s*requesting)\b");
   static final _movement = _ci(
-      r"\b(recharged?\b(?=[^.]{0,80}?\b(?:successful(?:ly)?|done|completed|success)\b)|successfully\s+recharged|debited|debit|credited|credit|spent|paid|withdrawn|withdrawal|purchase|deducted|sent|transferred|transfer|received|refund|refunded|deposited|deposit|transaction|txn|used\s*(for|at)|payment\s*of|reversed|reversal|cashback|salary|interest|thank\s*you\s*for\s*using|dr(?=\.?\s+from)|cr(?=\.?\s+to)|dr\.?(?=\s*(?:inr|rs|₹))|cr\.?(?=\s*(?:inr|rs|₹))|cr\.(?=\s)|dr\.(?=\s)|redeemed|payment\s+successful|cleared\s+with\s+your|initiated|processed\s+successfully)(?:(?<=\w)(?!\w)|(?<!\w))");
+      r"\b(recharged?\b(?=[^.]{0,80}?\b(?:successful(?:ly)?|done|completed|success)\b)|successfully\s+recharged|debited|debit|credited|credit|spent|paid|charged|withdrawn|withdrawal|purchase|deducted|sent|transferred|transfer|received|refund|refunded|deposited|deposit|transaction|txn|used\s*(for|at)|payment\s*of|reversed|reversal|cashback|salary|interest|thank\s*you\s*for\s*using|dr(?=\.?\s+from)|cr(?=\.?\s+to)|dr\.?(?=\s*(?:inr|rs|₹))|cr\.?(?=\s*(?:inr|rs|₹))|cr\.(?=\s)|dr\.(?=\s)|redeemed|payment\s+successful|cleared\s+with\s+your|initiated|processed\s+successfully)(?:(?<=\w)(?!\w)|(?<!\w))");
 
   // ---------------- amount ----------------
   static final _amountPrefixed = _ci(_cur + r"\s*" + _num);
   static final _amountSuffixed =
-      _ci(r"\b" + _num + r"\s*(?:rs\.?|inr|₹)(?![a-z])");
+      _ci(r"\b" + _num + r"\s*(?:rs\.?|inr|₹|rupees?)(?![a-z])");
+  // "Rs 1L" / "Rs 1.5 lakh".
+  static final _lakhAfter = _ci(r"\s?(?:lakhs?|lacs?)\b|l(?![a-z0-9&'\-]|\.\S)|\sl(?=\s+(?:debited|credited|deducted|paid|sent|spent|received|transferred|withdrawn|has|is|was)\b)");
   static final _amountBare = _ci(
       r"\b(?:debited|credited)\s+(?:by|for|with)\s+([0-9][0-9,]*(?:\.[0-9]{1,2})?)\b");
   static final _movedWord = _ci(r"\b(debited|credited|deducted)\b");
@@ -115,6 +134,11 @@ class TransactionParser {
     _ci(r"\bupi\s*[:\-]\s*(\d{6,})"),
   ];
   static final _twelveDigits = RegExp(r"\b(\d{12})\b");
+  // A 12-digit number that's a phone number, not a reference:
+  // "SMS BLOCK to 919951860002", "Recharge for 919876543210".
+  static final _phoneNumber = RegExp(r"^91[6-9]");
+  static final _phoneLead = _ci(
+      r"\b(?:to|call|sms|mobile|mob|phone|ph|whatsapp|contact|helpline)\W*$");
   static final _hasFourDigits = RegExp(r"\d{4,}");
 
   // ---------------- merchant ----------------
@@ -186,8 +210,10 @@ class TransactionParser {
           r"|\b(?:payment|repayment)\b.{0,60}?\bfor\s+(?:your\s+|the\s+)?(?:[a-z]+\s+){0,5}?credit\s*card\b.{0,60}?\b(?:received|credited)\b"
           r"|\b(?:received|credited)\b.{0,40}?\bto\s+your\s+(?:[a-z]+\s+){0,4}?credit\s*card\b"
           r"|\bcredited\s+to\s+your\s+card\s+account\b");
+  // Also "towards HDFC Credit Card XX5678 payment" (card digits in between)
+  // and "debited … towards your credit card".
   static final _ccBill = _ci(
-      r"\b(cc|credit\s*card)\s*(bill|dues|payment|pymt|pmt)\b|\b(to|towards)\s+cred(\s*club)?\b|\b(payment|paid|bill)\b.{0,40}?\b(towards|for)\s+(your\s+|the\s+)?((?!using|via|with|through|from|at)[a-z]+\s+){0,3}?credit\s*card\b");
+      r"\b(cc|credit\s*card)\s*(bill|dues|payment|pymt|pmt)\b|\b(?:towards|for|to)\s+(?:your\s+|the\s+)?(?:[a-z]+\s+){0,3}?(?:cc|credit\s*card)\s*(?:(?:no\.?|ending(?:\s*(?:in|with))?)\s*)?(?:x+|\*+|•+)?\s*\d{2,4}\s*(?:bill|dues|payment|pymt|pmt)\b|\b(?:debited|deducted|paid|transferred)\b.{0,50}?\btowards\s+(?:your\s+|the\s+)?(?:[a-z]+\s+){0,3}?credit\s*card\b|\b(to|towards)\s+cred(\s*club)?\b|\b(payment|paid|bill)\b.{0,40}?\b(towards|for)\s+(your\s+|the\s+)?((?!using|via|with|through|from|at)[a-z]+\s+){0,3}?credit\s*card\b");
   static final _notBill = _ci(r"\b(refund(ed)?|revers(ed|al)|cashback)\b");
   static final _receivedWord = _ci(r"\b(received|credited)\b");
   static final _outgoingWord =
@@ -226,6 +252,10 @@ class TransactionParser {
     if (_request.hasMatch(text)) return ParseResult.reject('request');
     if (_failed.hasMatch(text)) return ParseResult.reject('failed');
     if (_future.hasMatch(text)) return ParseResult.reject('future');
+    if (_futureMoney.hasMatch(text) &&
+        !_movedNow.hasMatch(text.replaceAll(_futureMoney, ' '))) {
+      return ParseResult.reject('future');
+    }
     if (_due.hasMatch(text) && !_moneyIn.hasMatch(text)) {
       return ParseResult.reject('future');
     }
@@ -328,8 +358,15 @@ class TransactionParser {
   static (double, int)? _extractAmount(String text) {
     for (final re in [_amountPrefixed, _amountSuffixed]) {
       for (final m in re.allMatches(text)) {
-        final amt = _toAmount(m.group(1)!);
+        var amt = _toAmount(m.group(1)!);
         if (amt == null) continue;
+        // "Rs 1L", "Rs 1.5 lakh": only right after a short plain number.
+        if (identical(re, _amountPrefixed) &&
+            !m.group(1)!.contains(',') &&
+            amt < 1000 &&
+            _lakhAfter.matchAsPrefix(text, m.end) != null) {
+          amt = (amt * 100000 * 100).round() / 100;
+        }
         final from = m.start - 24 < 0 ? 0 : m.start - 24;
         final before = text.substring(from, m.start);
         final bm = _balanceBefore.firstMatch(before);
@@ -450,7 +487,14 @@ class TransactionParser {
       final g = m?.group(1);
       if (g != null && _hasFourDigits.hasMatch(g)) return g;
     }
-    return _twelveDigits.firstMatch(text)?.group(1);
+    for (final m in _twelveDigits.allMatches(text)) {
+      final digits = m.group(1)!;
+      if (_phoneNumber.hasMatch(digits)) continue;
+      final before = text.substring(m.start < 16 ? 0 : m.start - 16, m.start);
+      if (_phoneLead.hasMatch(before)) continue;
+      return digits;
+    }
+    return null;
   }
 
   static const _months = {

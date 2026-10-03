@@ -2956,7 +2956,7 @@ class _CompactRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            '${item.isDebit ? '' : '+'}$currency${item.amount.toStringAsFixed(0)}',
+            '${item.isDebit ? '' : '+'}${_fmt(currency, item.amount)}',
             style: TextStyle(
                 color: item.isDebit ? Colors.white : Colors.green,
                 fontWeight: FontWeight.w600),

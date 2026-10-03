@@ -8,6 +8,12 @@ class DetectedTransaction {
   /// 'sms' | 'notification' (of the first capture)
   final String sourceKind;
 
+  /// The kind of every distinct report folded into this item, e.g.
+  /// ['notification', 'sms'] for an app alert plus the bank's SMS. An item
+  /// takes at most one report of each kind, so two real payments of the
+  /// same amount each keep their own SMS and notification.
+  final List<String> sources;
+
   /// Human label: "PhonePe", "HDFC Bank", "Bank SMS"…
   final String appLabel;
   final String rawText;
@@ -33,10 +39,12 @@ class DetectedTransaction {
   /// Used by "Always ignore" rules. Null for items captured before it existed.
   final String? sender;
 
-  const DetectedTransaction({
+  // Not const: [sources] defaults to a list built from [sourceKind].
+  DetectedTransaction({
     required this.id,
     required this.captureIds,
     required this.sourceKind,
+    List<String>? sources,
     required this.appLabel,
     required this.rawText,
     required this.amount,
@@ -53,20 +61,38 @@ class DetectedTransaction {
     required this.status,
     this.entryId,
     this.sender,
-  });
+  }) : sources = sources ?? [sourceKind];
 
   String get title =>
       merchant ?? (isDebit ? 'UPI payment' : 'Money received');
 
   bool get isPending => status == 'pending';
 
-  factory DetectedTransaction.fromJson(Map<String, dynamic> j) =>
-      DetectedTransaction(
+  factory DetectedTransaction.fromJson(Map<String, dynamic> j) {
+    final captureIds = ((j['capture_ids'] as List?) ?? const [])
+        .map((e) => (e as num).toInt())
+        .toList();
+    final String kind = j['source_kind'] ?? 'sms';
+    return DetectedTransaction(
         id: j['id'].toString(),
-        captureIds: ((j['capture_ids'] as List?) ?? const [])
-            .map((e) => (e as num).toInt())
-            .toList(),
-        sourceKind: j['source_kind'] ?? 'sms',
+        captureIds: captureIds,
+        sourceKind: kind,
+        // Saved before this was tracked: a second, different message was
+        // almost always the other kind (app alert + bank SMS). A repeat of
+        // the same message only added its id, not its text.
+        sources: j['sources'] is List
+            ? List<String>.from(j['sources'] as List)
+            : [
+                kind,
+                if (captureIds.length >= 2 &&
+                    '${j['raw_text'] ?? ''}'
+                            .split('\n\n')
+                            .where((s) => s.trim().isNotEmpty)
+                            .toSet()
+                            .length >=
+                        2)
+                  kind == 'sms' ? 'notification' : 'sms',
+              ],
         appLabel: j['app_label'] ?? 'Bank SMS',
         rawText: j['raw_text'] ?? '',
         amount: (j['amount'] as num).toDouble(),
@@ -84,11 +110,13 @@ class DetectedTransaction {
         entryId: j['entry_id'],
         sender: j['sender'],
       );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'capture_ids': captureIds,
         'source_kind': sourceKind,
+        'sources': sources,
         'app_label': appLabel,
         'raw_text': rawText,
         'amount': amount,
@@ -109,6 +137,7 @@ class DetectedTransaction {
 
   DetectedTransaction copyWith({
     List<int>? captureIds,
+    List<String>? sources,
     String? rawText,
     String? merchant,
     String? last4,
@@ -122,6 +151,7 @@ class DetectedTransaction {
         id: id,
         captureIds: captureIds ?? this.captureIds,
         sourceKind: sourceKind,
+        sources: sources ?? this.sources,
         appLabel: appLabel,
         rawText: rawText ?? this.rawText,
         amount: amount,

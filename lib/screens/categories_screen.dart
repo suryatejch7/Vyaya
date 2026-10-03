@@ -100,54 +100,57 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
         listenable: AppPrefs.instance,
         builder: (context, _) => Consumer<ExpenseProvider>(
         builder: (context, expenseProvider, child) {
-          final categoryTotals = expenseProvider.getCategoryTotalsByPeriod(
+          // One pass over the period's expenses for everything shown here
+          // (totals, counts), instead of one pass per category.
+          final summary = expenseProvider.periodSummary(
             _selectedPeriod,
             customStart: _customStartDate,
             customEnd: _customEndDate,
             accountId: _selectedAccountId,
           );
-          final totalForPeriod = expenseProvider.getTotalByPeriod(
-            _selectedPeriod,
-            customStart: _customStartDate,
-            customEnd: _customEndDate,
-            accountId: _selectedAccountId,
-          );
+          final categoryTotals = summary.totals;
+          final totalForPeriod = summary.total;
 
           // Savings aren't spending: they get their own card above the
           // categories (not per account, so hidden when filtering by one).
           final showSavings = _selectedAccountId == null;
 
           if (categoryTotals.isEmpty) {
+            // Scrolls in landscape / on small phones instead of overflowing;
+            // room at the bottom for the nav bar.
             return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (showSavings)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                      child: SavingsSummaryCard(
-                        period: _selectedPeriod,
-                        customStart: _customStartDate,
-                        customEnd: _customEndDate,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 110),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (showSavings)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                        child: SavingsSummaryCard(
+                          period: _selectedPeriod,
+                          customStart: _customStartDate,
+                          customEnd: _customEndDate,
+                        ),
                       ),
+                    const Icon(
+                      Icons.category_outlined,
+                      size: 80,
+                      color: Colors.grey,
                     ),
-                  const Icon(
-                    Icons.category_outlined,
-                    size: 80,
-                    color: Colors.grey,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No expenses for ${_getPeriodLabel().toLowerCase()}',
-                    style: const TextStyle(fontSize: 18, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Add some expenses to see category breakdown',
-                    style: TextStyle(fontSize: 14, color: Colors.grey),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    Text(
+                      'No expenses for ${_getPeriodLabel().toLowerCase()}',
+                      style: const TextStyle(fontSize: 18, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Add some expenses to see category breakdown',
+                      style: TextStyle(fontSize: 14, color: Colors.grey),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
               ),
             );
           }
@@ -217,7 +220,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${expenseProvider.getExpensesByPeriodType(_selectedPeriod, customStart: _customStartDate, customEnd: _customEndDate, accountId: _selectedAccountId).length} expenses',
+                          '${summary.count} expenses',
                           style: const TextStyle(
                             fontSize: 14,
                             color: Colors.grey,
@@ -434,7 +437,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          '${expenseProvider.getExpensesByCategoryAndPeriod(categoryName, _selectedPeriod, customStart: _customStartDate, customEnd: _customEndDate, accountId: _selectedAccountId).length} items',
+                                          '${summary.counts[categoryName] ?? 0} items',
                                           style: const TextStyle(
                                             fontSize: 12,
                                             color: Colors.grey,
@@ -453,8 +456,8 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                   },
                 ),
               ),
-              // Bottom padding for nav bar
-              const SizedBox(height: 100),
+              // (The list's own bottom padding keeps the last category
+              // clear of the nav bar; an extra gap here only wasted space.)
             ],
           );
         },

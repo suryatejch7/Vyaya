@@ -27,8 +27,10 @@ import 'notification_service.dart';
 /// - **Restore**: reads a previously exported JSON file, writes the values back
 ///   into SharedPreferences, and reloads the providers.
 /// - **Auto-file backup**: after every write the service can persist a shadow
-///   copy in the app's documents directory. This file is included in Android
-///   Auto Backup so it survives reinstalls even without a manual export.
+///   copy in the app's documents directory, used if SharedPreferences is
+///   wiped while the app's files remain. It is NOT in Android's cloud backup
+///   (allowBackup is off: the app is offline-only), so uninstalling or
+///   clearing storage removes it too; only a manual export survives that.
 class BackupService {
   // -------------------- constants --------------------
   static const String _autoBackupFileName = 'expense_tracker_auto_backup.json';
@@ -355,7 +357,7 @@ class BackupService {
           for (final m in jsonDecode(e.value as String) as List) {
             DebtEntry.fromJson(Map<String, dynamic>.from(m as Map));
           }
-        } else if (k.startsWith('ls_detected_')) {
+        } else if (RegExp(r'^ls_detected_\d+$').hasMatch(k)) {
           for (final m in jsonDecode(e.value as String) as List) {
             DetectedTransaction.fromJson(Map<String, dynamic>.from(m as Map));
           }

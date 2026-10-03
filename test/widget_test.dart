@@ -14,10 +14,29 @@ Widget _app() => MaterialApp(
 void main() {
   tearDown(UndoController.dismiss);
 
+  testWidgets('A new action shows only the bubble until tapped',
+      (tester) async {
+    await tester.pumpWidget(_app());
+    UndoController.show('Deleted "Lunch"', () {});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Deleted "Lunch"'), findsNothing);
+    expect(UndoController.state.value.collapsed, isTrue);
+
+    await tester.tap(find.byIcon(Icons.undo_rounded));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Deleted "Lunch"'), findsOneWidget);
+
+    UndoController.dismiss();
+    await tester.pump(const Duration(milliseconds: 300));
+  });
+
   testWidgets('Undo restores and hides the bar', (tester) async {
     var undone = false;
     await tester.pumpWidget(_app());
     UndoController.show('Deleted "Lunch"', () => undone = true);
+    UndoController.expand(); // opens the bubble
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Deleted "Lunch"'), findsOneWidget);
@@ -33,6 +52,7 @@ void main() {
     var undone = false;
     await tester.pumpWidget(_app());
     UndoController.show('Dismissed 3 payments', () => undone = true);
+    UndoController.expand(); // opens the bubble
     await tester.pump();
     await tester.pump(const Duration(seconds: 4));
     expect(find.text('Dismissed 3 payments'), findsOneWidget);
@@ -48,6 +68,7 @@ void main() {
     var undone = false;
     await tester.pumpWidget(_app());
     UndoController.show('Removed 2 payments', () => undone = true);
+    UndoController.expand(); // opens the bubble
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -63,6 +84,7 @@ void main() {
     final undone = <String>[];
     await tester.pumpWidget(_app());
     UndoController.show('Dismissed "Swiggy"', () => undone.add('swiggy'));
+    UndoController.expand(); // opens the bubble
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('Dismissed "Swiggy"'), findsOneWidget);

@@ -5,6 +5,7 @@ import '../models/expense_models.dart';
 import '../providers/expense_provider.dart';
 import '../services/app_prefs.dart';
 import 'dart:math' as math;
+import '../services/money_format.dart';
 
 
 /// 00:00 on the first day of the week containing [d]: Sunday by default,
@@ -33,12 +34,18 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   /// not spent, so they'd otherwise make every past month's spending equal
   /// its income.
   List<Expense> _getFilteredExpenses(ExpenseProvider provider) {
-    return provider.expenses
+    return _base ??= provider.expenses
         .where((e) => !ExpenseProvider.isAutoSavedEntry(e))
         .where((e) =>
             _selectedAccountId == null || e.accountId == _selectedAccountId)
         .toList();
   }
+
+  // Worked out once per rebuild and shared by the cards (each used to go
+  // through every expense again). Cleared at the start of every build.
+  List<Expense>? _base;
+  double? _periodTotal;
+  Map<String, double>? _categoryTotals;
 
   @override
   Widget build(BuildContext context) {
@@ -70,6 +77,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       ),
       body: Consumer<ExpenseProvider>(
         builder: (context, provider, child) {
+          _base = null;
+          _periodTotal = null;
+          _categoryTotals = null;
           return SingleChildScrollView(
             padding: const EdgeInsets.all(20),
             child: Column(
@@ -245,15 +255,24 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                '$currency${periodData.toStringAsFixed(0)}',
-                style: const TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+              // Shrinks to fit next to the change badge (big totals, small
+              // phones, large font).
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '$currency${formatAmount(periodData, 0)}',
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
               ),
               if (changePercent != 0) ...[
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
@@ -290,7 +309,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'vs Previous $_selectedPeriod: $currency${previousPeriodData.toStringAsFixed(0)}',
+            'vs Previous $_selectedPeriod: $currency${formatAmount(previousPeriodData, 0)}',
             style: const TextStyle(color: Colors.grey, fontSize: 14),
           ),
         ],
@@ -535,12 +554,21 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     ],
                   ),
                 ),
-                Text(
-                  '$currency${amount.toStringAsFixed(0)}',
-                  style: TextStyle(
-                    color: isOverBudget ? Colors.red : Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
+                // Shrinks a very large amount instead of overflowing.
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                      maxWidth: MediaQuery.sizeOf(context).width * 0.4),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      '$currency${formatAmount(amount, 0)}',
+                      style: TextStyle(
+                        color: isOverBudget ? Colors.red : Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -625,20 +653,30 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'Spent: $currency${provider.currentMonthTotalExpense.toStringAsFixed(0)}',
-                        style: const TextStyle(color: Colors.white),
+                      Flexible(
+                        child: Text(
+                          'Spent: $currency${formatAmount(provider.currentMonthTotalExpense, 0)}',
+                          style: const TextStyle(color: Colors.white),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      Text(
-                        'Income: $currency${provider.totalIncomeThisMonth.toStringAsFixed(0)}',
-                        style: const TextStyle(color: Colors.white),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          'Income: $currency${formatAmount(provider.totalIncomeThisMonth, 0)}',
+                          style: const TextStyle(color: Colors.white),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.end,
+                        ),
                       ),
                     ],
                   ),
                   if (provider.isOverspent) ...[
                     const SizedBox(height: 4),
                     Text(
-                      'Over by: $currency${provider.overspentBy.toStringAsFixed(0)}',
+                      'Over by: $currency${formatAmount(provider.overspentBy, 0)}',
                       style: const TextStyle(
                         color: Colors.red,
                         fontWeight: FontWeight.bold,
@@ -686,19 +724,34 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Text(
-                            category.displayName,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
+                          Expanded(
+                            child: Text(
+                              category.displayName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          const Spacer(),
-                          Text(
-                            '$currency${spent.toStringAsFixed(0)} / $currency${budget.toStringAsFixed(0)}',
-                            style: TextStyle(
-                              color: isOverBudget ? Colors.red : Colors.white,
-                              fontWeight: FontWeight.bold,
+                          const SizedBox(width: 8),
+                          // Shrinks large amounts instead of overflowing.
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                                maxWidth:
+                                    MediaQuery.sizeOf(context).width * 0.5),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                '$currency${formatAmount(spent, 0)} / $currency${formatAmount(budget, 0)}',
+                                style: TextStyle(
+                                  color:
+                                      isOverBudget ? Colors.red : Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ),
                         ],
@@ -714,7 +767,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       if (isOverBudget) ...[
                         const SizedBox(height: 4),
                         Text(
-                          'Over by: $currency${(spent - budget).toStringAsFixed(0)}',
+                          'Over by: $currency${formatAmount((spent - budget), 0)}',
                           style: const TextStyle(
                             color: Colors.red,
                             fontSize: 12,
@@ -844,8 +897,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  double _getPeriodData(ExpenseProvider provider) {
+  double _getPeriodData(ExpenseProvider provider) =>
+      _periodTotal ??= _computePeriodData(provider);
+
+  double _computePeriodData(ExpenseProvider provider) {
     final now = DateTime.now();
+    final weekStart = _weekStartOf(now);
     // Ensure we're using the most up-to-date expenses, filtered by account
     final baseExpenses = _getFilteredExpenses(provider);
     final expenses = baseExpenses.where((expense) {
@@ -856,7 +913,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               expense.date.day == now.day;
         case 'Week':
           // Calendar week (Sun–Sat, or Mon–Sun if chosen).
-          return _inWeek(expense.date, _weekStartOf(now));
+          return _inWeek(expense.date, weekStart);
         case 'Month':
           return expense.date.year == now.year &&
               expense.date.month == now.month;
@@ -928,7 +985,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         'icon': Icons.trending_up,
         'color': Colors.blue,
         'text':
-            '${topCategoryObj.displayName} is your highest spending category this $_selectedPeriod ($currency${topCategory.value.toStringAsFixed(0)})',
+            '${topCategoryObj.displayName} is your highest spending category this $_selectedPeriod ($currency${formatAmount(topCategory.value, 0)})',
       });
     }
 
@@ -939,7 +996,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           'icon': Icons.warning,
           'color': Colors.red,
           'text':
-              'You\'ve spent $currency${provider.overspentBy.toStringAsFixed(0)} more than your income this month',
+              'You\'ve spent $currency${formatAmount(provider.overspentBy, 0)} more than your income this month',
         });
       }
 
@@ -976,30 +1033,34 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final currency = provider.currency;
     switch (_selectedPeriod) {
       case 'Day':
-        return 'Total today: $currency${periodTotal.toStringAsFixed(0)}';
+        return 'Total today: $currency${formatAmount(periodTotal, 0)}';
       case 'Week':
         final daysInWeek =
             DateTime(now.year, now.month, now.day)
                     .difference(_weekStartOf(now))
                     .inDays +
                 1;
-        final avg = daysInWeek > 0 ? periodTotal / daysInWeek : 0;
-        return 'Average daily spending this week: $currency${avg.toStringAsFixed(0)}';
+        final avg = daysInWeek > 0 ? periodTotal / daysInWeek : 0.0;
+        return 'Average daily spending this week: $currency${formatAmount(avg, 0)}';
       case 'Month':
-        final avg = now.day > 0 ? periodTotal / now.day : 0;
-        return 'Average daily spending this month: $currency${avg.toStringAsFixed(0)}';
+        final avg = now.day > 0 ? periodTotal / now.day : 0.0;
+        return 'Average daily spending this month: $currency${formatAmount(avg, 0)}';
       case 'Year':
         final dayOfYear = now.difference(DateTime(now.year, 1, 1)).inDays + 1;
-        final avg = dayOfYear > 0 ? periodTotal / dayOfYear : 0;
-        return 'Average daily spending this year: $currency${avg.toStringAsFixed(0)}';
+        final avg = dayOfYear > 0 ? periodTotal / dayOfYear : 0.0;
+        return 'Average daily spending this year: $currency${formatAmount(avg, 0)}';
       default:
-        return 'Average daily spending: $currency${(periodTotal / now.day).toStringAsFixed(0)}';
+        return 'Average daily spending: $currency${formatAmount((periodTotal / now.day), 0)}';
     }
   }
 
   /// Get category totals filtered by selected period and account
-  Map<String, double> _getCategoryTotalsForPeriod(ExpenseProvider provider) {
+  Map<String, double> _getCategoryTotalsForPeriod(ExpenseProvider provider) =>
+      _categoryTotals ??= _computeCategoryTotals(provider);
+
+  Map<String, double> _computeCategoryTotals(ExpenseProvider provider) {
     final now = DateTime.now();
+    final weekStart = _weekStartOf(now);
     final baseExpenses = _getFilteredExpenses(provider);
     final filteredExpenses = baseExpenses.where((expense) {
       switch (_selectedPeriod) {
@@ -1009,7 +1070,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               expense.date.day == now.day;
         case 'Week':
           // Calendar week (Sun–Sat, or Mon–Sun if chosen).
-          return _inWeek(expense.date, _weekStartOf(now));
+          return _inWeek(expense.date, weekStart);
         case 'Month':
           return expense.date.year == now.year &&
               expense.date.month == now.month;
@@ -1073,14 +1134,8 @@ class SpendingTrendPainter extends CustomPainter {
     for (int i = 0; i <= 3; i++) {
       final value = maxValue * i / 3;
       final y = chartHeight - (chartHeight * i / 3) + 5;
-      String label;
-      if (value >= 100000) {
-        label = '${(value / 1000).toStringAsFixed(0)}K';
-      } else if (value >= 1000) {
-        label = '${(value / 1000).toStringAsFixed(1)}K';
-      } else {
-        label = value.toStringAsFixed(0);
-      }
+      // Indian units: 950, 12K, 2.5L, 1.2Cr.
+      final label = compactAmount(value);
       final textPainter = TextPainter(
         text: TextSpan(
           text: label,
@@ -1457,14 +1512,7 @@ class ComparisonBarPainter extends CustomPainter {
 
       // Value label on top of bar
       if (data[i] > 0) {
-        String valueLabel;
-        if (data[i] >= 100000) {
-          valueLabel = '${(data[i] / 1000).toStringAsFixed(0)}K';
-        } else if (data[i] >= 1000) {
-          valueLabel = '${(data[i] / 1000).toStringAsFixed(1)}K';
-        } else {
-          valueLabel = data[i].toStringAsFixed(0);
-        }
+        final valueLabel = compactAmount(data[i]);
         final textPainter = TextPainter(
           text: TextSpan(
             text: valueLabel,

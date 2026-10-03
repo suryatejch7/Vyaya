@@ -32,9 +32,40 @@ class IncomeDataManager {
 
     final existingIndex = _incomes.indexWhere((i) => i.id == incomeId);
     if (existingIndex == -1) {
-      _incomes.add(incomeWithId);
-      _incomes.sort(byDateDesc);
+      _incomes.insert(_insertAt(incomeWithId), incomeWithId);
     }
+  }
+
+  /// First index whose income sorts after [i] (binary search; the list is
+  /// kept in order).
+  int _insertAt(Income i) {
+    var lo = 0, hi = _incomes.length;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      if (byDateDesc(_incomes[mid], i) <= 0) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
+  /// Adds several at once (undo of a big delete): one write, one sort.
+  Future<void> addMany(List<Income> items, int userId) async {
+    if (items.isEmpty) return;
+    final ids = await LocalStore.addIncomes(items, userId);
+    for (var k = 0; k < items.length; k++) {
+      _incomes.add(items[k].copyWith(id: ids[k]));
+    }
+    _incomes.sort(byDateDesc);
+  }
+
+  /// Deletes several at once: one pass over the list.
+  Future<void> deleteMany(Set<String> ids, int userId) async {
+    if (ids.isEmpty) return;
+    await LocalStore.deleteIncomes(ids, userId);
+    _incomes.removeWhere((i) => ids.contains(i.id));
   }
 
   Future<void> updateIncome(Income income, int userId) async {

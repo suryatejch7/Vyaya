@@ -115,23 +115,32 @@ class ExpenseCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '$currency${formatAmount(expense.amount)}',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // Big amounts shrink instead of squeezing the name
+                    // (small phones, large font).
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        '$currency${formatAmount(expense.amount)}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _formatDate(expense.date),
-                    style: const TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ],
+                    const SizedBox(height: 2),
+                    Text(
+                      _formatDate(expense.date),
+                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(width: 4),
               PopupMenuButton<String>(

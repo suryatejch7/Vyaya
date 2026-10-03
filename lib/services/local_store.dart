@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' show Random;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/expense_models.dart';
 import '../models/user_settings.dart' as models;
@@ -119,11 +121,13 @@ class LocalStore {
     return _prefs!;
   }
 
-  static int _nextId(String key) {
+  static int _nextId(String key) => _reserveIds(key, 1);
+
+  /// Takes [count] ids in a row and returns the first.
+  static int _reserveIds(String key, int count) {
     final current = _p.getInt(key) ?? 0;
-    final next = current + 1;
-    _p.setInt(key, next);
-    return next;
+    _p.setInt(key, current + count);
+    return current + 1;
   }
 
   // ==================== USER OPERATIONS ====================
@@ -342,6 +346,33 @@ class LocalStore {
     _markDirty('$_expensesPrefix$userId');
   }
 
+  /// Adds several expenses in one go (undo of a big delete): ids are taken
+  /// in one block and the list is written once. Returns the new ids, in
+  /// the same order.
+  static Future<List<String>> addExpenses(
+      List<Expense> items, int userId) async {
+    if (items.isEmpty) return const [];
+    final first = _reserveIds(_nextExpenseIdKey, items.length);
+    final rows = _loadExpensesRaw(userId);
+    final ids = <String>[];
+    for (var k = 0; k < items.length; k++) {
+      final id = (first + k).toString();
+      rows.add(items[k].toJson()
+        ..['id'] = id
+        ..['user_id'] = userId);
+      ids.add(id);
+    }
+    _markDirty('$_expensesPrefix$userId');
+    return ids;
+  }
+
+  /// Deletes several expenses in one pass.
+  static Future<void> deleteExpenses(Set<String> ids, int userId) async {
+    if (ids.isEmpty) return;
+    _loadExpensesRaw(userId).removeWhere((e) => ids.contains(e['id'].toString()));
+    _markDirty('$_expensesPrefix$userId');
+  }
+
   static Future<List<Expense>> getExpenses({
     required int userId,
     String? category,
@@ -349,7 +380,8 @@ class LocalStore {
     DateTime? endDate,
   }) async {
     final expenses = _loadExpensesRaw(userId);
-    var result = expenses.map((e) => Expense.fromJson(e)).toList();
+    var result =
+        _readAll('$_expensesPrefix$userId', expenses, Expense.fromJson);
 
     if (category != null) {
       result = result.where((e) => e.category == category).toList();
@@ -397,9 +429,34 @@ class LocalStore {
     _markDirty('$_incomesPrefix$userId');
   }
 
+  /// Like [addExpenses], for income.
+  static Future<List<String>> addIncomes(List<Income> items, int userId) async {
+    if (items.isEmpty) return const [];
+    final first = _reserveIds(_nextIncomeIdKey, items.length);
+    final rows = _loadIncomesRaw(userId);
+    final ids = <String>[];
+    for (var k = 0; k < items.length; k++) {
+      final id = (first + k).toString();
+      rows.add(items[k].toJson()
+        ..['id'] = id
+        ..['user_id'] = userId);
+      ids.add(id);
+    }
+    _markDirty('$_incomesPrefix$userId');
+    return ids;
+  }
+
+  /// Deletes several incomes in one pass.
+  static Future<void> deleteIncomes(Set<String> ids, int userId) async {
+    if (ids.isEmpty) return;
+    _loadIncomesRaw(userId).removeWhere((i) => ids.contains(i['id'].toString()));
+    _markDirty('$_incomesPrefix$userId');
+  }
+
   static Future<List<Income>> getIncomes({required int userId}) async {
     final incomes = _loadIncomesRaw(userId);
-    final result = incomes.map((i) => Income.fromJson(i)).toList();
+    final result =
+        _readAll('$_incomesPrefix$userId', incomes, Income.fromJson);
     result.sort((a, b) => b.date.compareTo(a.date));
     return result;
   }
@@ -431,6 +488,29 @@ class LocalStore {
     BackupService.autoSave();
   }
 
+  // ==================== THIS PHONE ONLY ====================
+  // Values about this installation rather than your data: not `ls_*`, so
+  // they're never put in a backup and a restore leaves them as they are.
+  // Reset All Data clears them like everything else.
+
+  static String? getDeviceValue(String name) => _p.getString('device_$name');
+
+  static Future<void> setDeviceValue(String name, String value) async {
+    await _p.setString('device_$name', value);
+  }
+
+  /// A random id for this installation of the app, made on first use. A
+  /// reinstall or a new phone gets a new one.
+  static String installId() {
+    final existing = getDeviceValue('install_id');
+    if (existing != null && existing.isNotEmpty) return existing;
+    final id = '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}'
+        '${Random.secure().nextInt(1 << 32).toRadixString(36)}';
+    // Saved in the background; the same value is returned meanwhile.
+    _p.setString('device_install_id', id);
+    return id;
+  }
+
   // ==================== DATA MANAGEMENT ====================
 
   /// Clears ALL app data from local storage.
@@ -453,6 +533,26 @@ class LocalStore {
     await _p.remove('ls_savings_from_$userId');
     await _p.remove('ls_savings_enabled_$userId');
     await _p.remove('ls_savings_skip_$userId');
+  }
+
+  /// True when a stored entry couldn't be read (it's skipped, not deleted,
+  /// and stays in storage and backups as it was).
+  static bool get hasUnreadable => _unreadable.isNotEmpty;
+  static final Set<String> _unreadable = {};
+
+  static List<T> _readAll<T>(String key, List<Map<String, dynamic>> raw,
+      T Function(Map<String, dynamic>) read) {
+    _unreadable.remove(key);
+    final out = <T>[];
+    for (final m in raw) {
+      try {
+        out.add(read(m));
+      } catch (e) {
+        _unreadable.add(key);
+        debugPrint('Skipped an unreadable entry: $e');
+      }
+    }
+    return out;
   }
 
   // ==================== PRIVATE HELPERS ====================

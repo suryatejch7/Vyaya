@@ -3,6 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'undo_snackbar.dart';
 
+/// How much the 280-wide glass bars (nav bar, undo bar) are scaled: 0.9
+/// normally, smaller on narrow phones (320 dp) so they never run into the
+/// round + / filter button at the right of their row (16 dp margins, 56 dp
+/// button, 8 dp gap).
+double glassBarScale(BuildContext context) {
+  final room = MediaQuery.of(context).size.width - 96;
+  return (room / 280).clamp(0.6, 0.9);
+}
+
 /// Hosts the undo dock above every screen.
 ///
 /// Full bar: sits exactly where the glass nav bar is (the nav bar fades out
@@ -161,10 +170,10 @@ class _UndoDockState extends State<_UndoDock>
         transform: Matrix4.translationValues(0, _dragDy, 0),
         child: Opacity(
           opacity: (1 - _dragDy / 120).clamp(0.3, 1.0),
-          // Same glass styling and size as GlassNavBar (280x70 at 0.9).
+          // Same glass styling and size as GlassNavBar (280x70, scaled).
           child: Transform.scale(
             alignment: Alignment.centerLeft,
-            scale: 0.9,
+            scale: glassBarScale(context),
             child: Semantics(
               button: collapsed,
               label: collapsed

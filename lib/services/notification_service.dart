@@ -6,6 +6,8 @@ import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:vyaya_capture/vyaya_capture.dart';
 import 'app_prefs.dart';
+import 'local_store.dart';
+import 'money_format.dart';
 
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
@@ -32,17 +34,48 @@ class NotificationService {
 
     await _notificationsPlugin.initialize(initializationSettings);
 
-    await _requestPermissions();
-
+    // The permission is asked once the app is on screen (see
+    // [askPermissionOnce]), not here: this runs before the first frame.
     _isInitialized = true;
   }
 
-  static Future<void> _requestPermissions() async {
-    await _notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.requestNotificationsPermission();
+  static AndroidFlutterLocalNotificationsPlugin? get _android =>
+      _notificationsPlugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+
+  /// Asks Android for the notification permission (Android 13+). Returns
+  /// whether notifications are allowed afterwards.
+  static Future<bool> requestPermission() async {
+    try {
+      final granted = await _android?.requestNotificationsPermission();
+      // Android below 13 has no prompt (null): only the system switch counts.
+      return (granted ?? true) && await systemAllowed();
+    } catch (e) {
+      debugPrint('Notification permission request failed: $e');
+      return systemAllowed();
+    }
+  }
+
+  /// Whether Android lets Vyaya show notifications at all (the user can
+  /// block them in system settings, or deny the Android 13+ prompt).
+  static Future<bool> systemAllowed() async {
+    try {
+      return await _android?.areNotificationsEnabled() ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Asks for the permission the first time the app is opened, after it's
+  /// on screen. Later, Settings → Notifications shows when it's blocked
+  /// and offers to allow it.
+  static Future<void> askPermissionOnce() async {
+    const key = 'notif_permission_asked';
+    if (LocalStore.getDeviceValue(key) != null) return;
+    await LocalStore.setDeviceValue(key, '1');
+    if (!AppPrefs.instance.notificationsOn) return;
+    if (await systemAllowed()) return;
+    await requestPermission();
   }
 
   /// The master switch in Settings → Notifications.
@@ -53,6 +86,8 @@ class NotificationService {
   /// individual switches allow.
   static Future<void> setNotificationsEnabled(bool enabled) async {
     await AppPrefs.instance.setNotificationsOn(enabled);
+    // Turning them on is the moment to ask Android too, if it's blocking.
+    if (enabled && !await systemAllowed()) await requestPermission();
     if (!enabled) await _notificationsPlugin.cancelAll();
     await syncDailyReminder(AppPrefs.instance.reminderMinutes);
     await onScheduledCleared?.call();
@@ -198,7 +233,7 @@ class NotificationService {
       final overspent = monthlySpent - monthlyIncome;
       await _showNotification(
         'Spending Exceeded Income',
-        'You\'ve spent ₹${overspent.toInt()} more than your income this month. Income: ₹${monthlyIncome.toInt()}',
+        'You\'ve spent ₹${formatAmount(overspent, 0)} more than your income this month. Income: ₹${formatAmount(monthlyIncome, 0)}',
         importance: Importance.high,
       );
     }
@@ -210,7 +245,7 @@ class NotificationService {
     final id = 50000 + DateTime.now().millisecondsSinceEpoch % 40000;
     await _notificationsPlugin.show(
       id,
-      'Large payment: ₹${amount.toStringAsFixed(0)}',
+      'Large payment: ₹${formatAmount(amount, 0)}',
       payee.isEmpty ? 'Logged just now' : 'To $payee · logged just now',
       NotificationDetails(
         android: AndroidNotificationDetails(
@@ -239,7 +274,7 @@ class NotificationService {
       final overspent = categorySpent - categoryBudget;
       await _showNotification(
         '$categoryName Budget Exceeded',
-        'You\'ve exceeded your $categoryName budget by ₹${overspent.toInt()}. Budget: ₹${categoryBudget.toInt()}',
+        'You\'ve exceeded your $categoryName budget by ₹${formatAmount(overspent, 0)}. Budget: ₹${formatAmount(categoryBudget, 0)}',
         importance: Importance.high,
       );
     }

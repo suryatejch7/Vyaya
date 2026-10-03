@@ -6,6 +6,7 @@ import '../providers/expense_provider.dart';
 import '../models/expense_models.dart';
 import '../widgets/expense_card.dart';
 import '../widgets/income_card.dart';
+import '../services/money_format.dart';
 
 enum _SearchSort { newest, oldest, highest, lowest }
 
@@ -134,7 +135,7 @@ String _dateLabel(_SearchFilters f) {
 }
 
 String _amt(double v) =>
-    v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
+    formatAmount(v, v == v.roundToDouble() ? 0 : 2);
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -428,22 +429,29 @@ class _SearchScreenState extends State<SearchScreen> {
     });
 
     if (results.isEmpty) {
+      // Scrolls when the keyboard leaves little room (small phones,
+      // landscape) instead of overflowing.
       return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.search_off, size: 80, color: Colors.grey),
-            SizedBox(height: 16),
-            Text(
-              'No results found',
-              style: TextStyle(fontSize: 18, color: Colors.grey),
-            ),
-            SizedBox(height: 8),
-            Text(
-              'Try other words or loosen the filters',
-              style: TextStyle(fontSize: 14, color: Colors.grey),
-            ),
-          ],
+        child: SingleChildScrollView(
+          padding: EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.search_off, size: 80, color: Colors.grey),
+              SizedBox(height: 16),
+              Text(
+                'No results found',
+                style: TextStyle(fontSize: 18, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 8),
+              Text(
+                'Try other words or loosen the filters',
+                style: TextStyle(fontSize: 14, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -458,8 +466,8 @@ class _SearchScreenState extends State<SearchScreen> {
         .fold(0.0, (s, i) => s + i.amount);
     final summary = [
       '${results.length} result${results.length == 1 ? '' : 's'}',
-      if (expenses.isNotEmpty) '$currency${spent.toStringAsFixed(0)} spent',
-      if (incomes.isNotEmpty) '$currency${received.toStringAsFixed(0)} received',
+      if (expenses.isNotEmpty) '$currency${formatAmount(spent, 0)} spent',
+      if (incomes.isNotEmpty) '$currency${formatAmount(received, 0)} received',
     ].join(' · ');
 
     return ListView.builder(
@@ -502,28 +510,35 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildHint() {
+    // Scrolls when the keyboard (open as soon as Search opens) leaves
+    // little room, instead of overflowing.
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.search, size: 80, color: Colors.grey),
-          const SizedBox(height: 16),
-          const Text(
-            'Start typing to search',
-            style: TextStyle(fontSize: 18, color: Colors.grey),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'or pick filters to browse',
-            style: TextStyle(fontSize: 14, color: Colors.grey),
-          ),
-          const SizedBox(height: 16),
-          OutlinedButton.icon(
-            onPressed: _openFilterSheet,
-            icon: const Icon(Icons.tune_rounded, size: 18),
-            label: const Text('Sort & filter'),
-          ),
-        ],
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.search, size: 80, color: Colors.grey),
+            const SizedBox(height: 16),
+            const Text(
+              'Start typing to search',
+              style: TextStyle(fontSize: 18, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'or pick filters to browse',
+              style: TextStyle(fontSize: 14, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: _openFilterSheet,
+              icon: const Icon(Icons.tune_rounded, size: 18),
+              label: const Text('Sort & filter'),
+            ),
+          ],
+        ),
       ),
     );
   }

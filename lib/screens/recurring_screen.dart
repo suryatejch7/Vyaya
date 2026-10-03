@@ -5,6 +5,7 @@ import '../models/expense_models.dart';
 import '../models/recurring_entry.dart';
 import '../providers/expense_provider.dart';
 import '../widgets/undo_snackbar.dart';
+import '../services/money_format.dart';
 
 String _ordinal(int n) {
   if (n >= 11 && n <= 13) return '${n}th';
@@ -147,7 +148,7 @@ class _RecurringTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${entry.isIncome ? '+' : ''}$currency${entry.amount.toStringAsFixed(0)} · ${entry.isIncome ? 'Income' : entry.category} · ${entry.scheduleLabel}',
+                      '${entry.isIncome ? '+' : ''}$currency${formatAmount(entry.amount, 0)} · ${entry.isIncome ? 'Income' : entry.category} · ${entry.scheduleLabel}',
                       style: TextStyle(
                         fontSize: 12,
                         color: entry.isIncome ? Colors.green[400] : color,
@@ -294,7 +295,21 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
   /// This week's / month's / year's occurrence.
   DateTime get _thisPeriodOccurrence => _schedule.occurrenceInPeriodOf(_today);
 
+  bool _saving = false;
+
+  /// One save at a time: a quick double tap used to add the entry twice (and
+  /// a duplicated recurring entry logs the money twice every period).
   Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await _doSave();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _doSave() async {
     if (!_formKey.currentState!.validate()) return;
     final provider = context.read<ExpenseProvider>();
     final navigator = Navigator.of(context);
@@ -608,7 +623,7 @@ class _RecurringFormScreenState extends State<RecurringFormScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _save,
+                onPressed: _saving ? null : _save,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),

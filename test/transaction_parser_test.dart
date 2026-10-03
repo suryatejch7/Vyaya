@@ -270,4 +270,46 @@ void main() {
     expect(r.isOk, isTrue);
     expect(r.transaction!.occurredAt, DateTime(2026, 8, 14, 12));
   });
+  // Money that hasn't moved yet (pre-debit notices, pending refunds and
+  // cashback) and more OTP wordings stay out.
+  test('#207 to be debited (mandate)', () => _reject('Rs 649 to be debited from card XX1234 on 10-10-26 for NETFLIX under e-mandate'));
+  test('#208 shall be deducted', () => _reject('EMI of Rs 3,200 shall be deducted from A/c XX1234 on 5th Oct'));
+  test('#209 due for debit', () => _reject('EMI of Rs 4,500 for loan XX1234 is due for debit on 05-10-2026. Maintain sufficient balance.'));
+  test('#210 pre-debit notice', () => _reject('Pre-debit notification: Rs 299 to be debited from A/c XX1234 on 07-10-26 for JIOHOTSTAR mandate.'));
+  test('#211 automatically charged tomorrow', () => _reject('Your Netflix monthly membership fee of Rs 649 will be automatically charged to your registered card tomorrow.'));
+  test('#212 refund will be credited', () => _reject('Refund of Rs 499 processed. Amount will be credited to your A/c XX1234 in 5-7 days'));
+  test('#213 refund initiated', () => _reject('Refund of Rs 499 initiated by AMAZON. It will be credited to your account in 5-7 days.'));
+  test('#214 cashback will be credited', () => _reject('Cashback of Rs 50 will be credited to your wallet in 24 hours', source: 'notification'));
+  test('#215 salary credited, interest later', () => _accept('Rs.75,000.00 credited to A/c XX1234. Salary credit from ABC LTD. Interest will be credited quarterly.', 75000.0, false, null));
+  test('#216 refund credited', () => _accept('Rs 1,299 refund credited to your A/c XX1234 from Amazon', 1299.0, false, 'Amazon'));
+  test('#217 one time PIN after details', () => _reject('Your One Time PIN for txn of INR 1500 at Flipkart on HDFC card XX1234 is 228811'));
+  test('#218 code for your transaction', () => _reject('228811 is the code for your transaction of Rs.500 at AMAZON on card XX1234'));
+  test('#219 enter code to authorise', () => _reject('Enter 482913 to authorise txn of Rs 2,500 at AMAZON on card XX1234'));
+  test('#220 do not share OTP, balance after', () => _accept('Rs 640 debited from A/c XX1234 to SWIGGY. Never share your OTP with anyone Avl Bal is 5000', 640.0, true, 'Swiggy'));
+  // Card bill auto-debits, "charged", lakh and "Rupees" amounts.
+  test('#221 card bill with card digits', () => _accept('Rs 12,345 auto-debited from A/c XX1234 towards HDFC Credit Card XX5678 payment.', 12345.0, true, null, flag: 'card-bill'));
+  test('#222 debited towards credit card', () => _accept('Rs 5,000 debited from A/c XX1234 towards your SBI credit card', 5000.0, true, null, flag: 'card-bill'));
+  test('#223 charged to card', () => _accept('Rs 119 charged to card XX1234 for Spotify renewal', 119.0, true, null));
+  test('#224 Rs 1L', () => _accept('Rs 1L debited from A/c XX1234 to RAHUL via IMPS', 100000.0, true, 'Rahul'));
+  test('#225 1.5 lakh', () => _accept('INR 1.5 lakh credited to your A/c XX1234 by NEFT', 150000.0, false, null));
+  test('#226 L&T is not lakh', () => _accept('Rs 500 L&T Finance EMI debited from A/c XX1234', 500.0, true, null));
+  test('#227 Rupees 500', () => _accept('Rupees 500 debited from your A/c XX1234', 500.0, true, null));
+  test('#228 500 rupees', () => _accept('500 rupees debited from your A/c XX1234 to SWIGGY', 500.0, true, 'Swiggy'));
+  // A phone number is not a payment reference.
+  test('#229 SMS BLOCK number is not a ref', () {
+    final r = TransactionParser.parse('INR 120.00 spent on Axis Bank Card XX1234 at AMAZON on 27-09-26. Not you? SMS BLOCK 1234 to 919951860002', postedAt: DateTime(2026, 9, 27, 10));
+    expect(r.isOk, isTrue);
+    expect(r.transaction!.reference, isNull);
+  });
+  test('#230 recharged number is not a ref', () {
+    final r = TransactionParser.parse('Recharge of Rs 299 for 919876543210 successful', postedAt: DateTime(2026, 8, 16, 10));
+    expect(r.isOk, isTrue);
+    expect(r.transaction!.reference, isNull);
+  });
+  test('#231 real UTR still read', () {
+    final r = TransactionParser.parse('Rs.1,00,000.50 debited from A/c XX1234 on 01-10-26 to RAHUL via IMPS. Ref 123456789012', postedAt: DateTime(2026, 10, 1, 10));
+    expect(r.isOk, isTrue);
+    expect(r.transaction!.amount, closeTo(100000.5, 0.001));
+    expect(r.transaction!.reference, '123456789012');
+  });
 }

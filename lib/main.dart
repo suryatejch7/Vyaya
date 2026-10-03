@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'providers/expense_provider.dart';
 import 'providers/user_provider.dart';
@@ -45,10 +46,16 @@ void main() async {
   // Restore from auto-backup file if SharedPreferences was wiped
   await BackupService.restoreFromAutoBackupIfNeeded();
 
-  // Initialize Notifications
-  await NotificationService.initialize();
-  await NotificationService.syncDailyReminder(AppPrefs.instance.reminderMinutes);
-  await NotificationService.syncDetectedNotifier();
+  // Initialize Notifications. A failure here mustn't keep the app from
+  // opening (it would only mean no reminders).
+  try {
+    await NotificationService.initialize();
+    await NotificationService.syncDailyReminder(
+        AppPrefs.instance.reminderMinutes);
+    await NotificationService.syncDetectedNotifier();
+  } catch (e) {
+    debugPrint('Notification setup failed: $e');
+  }
 
   runApp(const MyApp());
 }
@@ -95,10 +102,24 @@ class AppBootstrap extends StatefulWidget {
 class _AppBootstrapState extends State<AppBootstrap> {
   bool _ready = false;
 
+  /// Why your data couldn't be opened, if it couldn't. Shows a recovery
+  /// screen instead of spinning forever.
+  Object? _error;
+
   @override
   void initState() {
     super.initState();
-    _bootstrap();
+    _start();
+  }
+
+  Future<void> _start() async {
+    if (_error != null) setState(() => _error = null);
+    try {
+      await _bootstrap();
+    } catch (e, st) {
+      debugPrint('Startup failed: $e\n$st');
+      if (mounted) setState(() => _error = e);
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -128,6 +149,8 @@ class _AppBootstrapState extends State<AppBootstrap> {
       await captureProvider.attach(expenseProvider);
       // Weekly summary / monthly recap / bill reminders stay up to date.
       SmartNotifications.attach(expenseProvider);
+    } else {
+      throw userProvider.errorMessage ?? 'Your account could not be loaded';
     }
 
     if (mounted) {
@@ -135,8 +158,68 @@ class _AppBootstrapState extends State<AppBootstrap> {
     }
   }
 
+  Future<void> _restoreBackup() async {
+    String? path;
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+      path = result?.files.single.path;
+    } catch (e) {
+      debugPrint('Picking a backup failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Couldn\'t open the file. Try again.')),
+        );
+      }
+      return;
+    }
+    if (path == null || !mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF2A2A2A),
+        title: const Text(
+          'Restore Backup?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'This will replace ALL data on this phone with the data from the '
+          'backup file.\n\nTap "Save a copy of my data" first if you might need what\'s '
+          'here now. Continue?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo),
+            child: const Text('Restore',
+                style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final ok = await BackupService.restoreFromFile(context, path);
+    if (ok && mounted) await _start();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final error = _error;
+    if (error != null) {
+      return _StartupProblem(
+        error: error,
+        onRetry: _start,
+        onSaveCopy: () => BackupService.createAndShareBackup(context),
+        onRestore: _restoreBackup,
+      );
+    }
     if (!_ready) {
       return const Scaffold(
         backgroundColor: Colors.black,
@@ -146,6 +229,86 @@ class _AppBootstrapState extends State<AppBootstrap> {
       );
     }
     return const MainScreen();
+  }
+}
+
+/// Shown when the stored data can't be opened at start-up: try again, save
+/// a copy of the raw data (so nothing is lost), or restore a backup.
+class _StartupProblem extends StatelessWidget {
+  final Object error;
+  final VoidCallback onRetry;
+  final VoidCallback onSaveCopy;
+  final VoidCallback onRestore;
+  const _StartupProblem({
+    required this.error,
+    required this.onRetry,
+    required this.onSaveCopy,
+    required this.onRestore,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 32),
+              const Icon(Icons.error_outline_rounded,
+                  color: Colors.orangeAccent, size: 56),
+              const SizedBox(height: 16),
+              const Text(
+                'Vyaya couldn\'t open your data',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Nothing has been deleted. Try again, or save a copy of your data first and then restore a backup.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: SelectableText(
+                  '$error',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Try again'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: onSaveCopy,
+                icon: const Icon(Icons.save_alt_rounded),
+                label: const Text('Save a copy of my data'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: onRestore,
+                icon: const Icon(Icons.restore_rounded),
+                label: const Text('Restore from a backup'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

@@ -119,6 +119,14 @@ class VyayaCapture {
       }) ??
       0;
 
+  /// Like [backfillSms], but null when the inbox couldn't be read (no
+  /// permission, or an error), so the caller can try that period again.
+  static Future<int?> tryBackfillSms(DateTime since, {int limit = 5000}) =>
+      _call<int>('backfillSms', {
+        'sinceMillis': since.millisecondsSinceEpoch,
+        'limit': limit,
+      });
+
   /// Show a system notification when something is captured while the app is
   /// closed.
   static Future<void> setNotifierEnabled(bool enabled) =>
