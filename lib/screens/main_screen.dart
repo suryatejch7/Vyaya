@@ -4,6 +4,7 @@ import 'dashboard_screen.dart';
 import 'categories_screen.dart';
 import 'add_expense_screen.dart';
 import 'add_income_screen.dart';
+import 'onboarding_screen.dart';
 // Screenshot scanning is disabled (offline build) - see README.md.
 // import 'transaction_scanner_screen.dart';
 // import '../services/sharing_intent_service.dart';
@@ -56,11 +57,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       ),
       const CategoriesScreen(),
     ]);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       // SharingIntentService.setContext(context); // screenshot scanning off
       IntentService.setContext(context);
-      // First launch: ask for the notification permission now that the
-      // app is on screen (not over a black startup screen).
+      // First launch: the short intro, then the notification permission
+      // (asked once the app is on screen, not over the startup screen).
+      await OnboardingScreen.showIfNeeded(context);
+      if (!mounted) return;
       NotificationService.askPermissionOnce();
     });
   }

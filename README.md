@@ -101,7 +101,7 @@ You can run the same checks yourself: put the CSVs in `tool/parser_eval/data/` a
 
 ## Finding your way around
 
-Some features are hidden behind gestures, so here's the cheat sheet:
+On first launch a short intro (3 pages, skippable) explains the offline storage, lets you turn on auto-detect, and shows the main gestures. Here's the full cheat sheet:
 
 | Where | Do this | What happens |
 |---|---|---|
